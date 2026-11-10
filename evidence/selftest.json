@@ -1,0 +1,20 @@
+{
+  "at": "2026-11-10T18:33:23.285Z",
+  "ok": true,
+  "checks": 12,
+  "names": [
+    "Cursor cumulative/final dedup, including partial chunks",
+    "Antigravity event/result schema; progress never leaks as answer",
+    "Terminal result and nonzero exit required; assistant alone is not success",
+    "Exact Antigravity prompt argument and Cursor tool boundary",
+    "Text flatten preserves short turns and bounds long context with omission markers",
+    "One finish on adapter failure; preaborted signal yields aborted",
+    "CN-only config, disabled calls, persistence rejection preserves state",
+    "CN billing unknown values are never a fabricated zero",
+    "Subagent result and cancellation contract",
+    "Actual process abort, timeout, and spawn failure settle with bounded cleanup",
+    "Safe diagnostics redact secret-shaped values",
+    "Host registration, workspace mapping, service/tool/HTTP parity, disposal"
+  ],
+  "scope": "Local contracts and owned Node subprocesses; not installed Host or UI verification"
+}

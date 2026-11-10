@@ -1,0 +1,36 @@
+{
+  "retrieved": "2026-11-09",
+  "note": "Platform artwork; antigravity.svg has its decorative background circle removed for transparent UI rendering. Trademarks belong to their respective owners.",
+  "icons": [
+    {
+      "file": "deepseek.ico",
+      "source": "https://www.deepseek.com/favicon.ico",
+      "sha256": "30a4420e6e4dcb17fd7de560c5004346c2bc8cd971d2d5f5ee15326603e51321",
+      "bytes": 209762
+    },
+    {
+      "file": "workbuddy.svg",
+      "source": "https://assets.workbuddy.cn/web/workbuddy/2d555459d623c206fdb8c6a492111abb97151910/assets/logo.svg",
+      "sha256": "10ccbc099e7bc3d5ff12c315c4edd7b21386aa7166c1ec19997b3d55010d5c7d",
+      "bytes": 4142
+    },
+    {
+      "file": "cursor.svg",
+      "source": "https://cursor.com/marketing-static/favicon.svg",
+      "sha256": "878309a7f82021e76cdf211188dd052fe6aaf2f435c24887a731d8a19582d260",
+      "bytes": 4373
+    },
+    {
+      "file": "antigravity.svg",
+      "source": "https://antigravity.google/favicon.svg",
+      "sha256": "cd12fa64fc0029716c016792c6a65d1e082e312d6184a43cac88542722dd10f3",
+      "bytes": 4839
+    },
+    {
+      "file": "codex.png",
+      "source": "Installed OpenAI.Codex 26.1103.4239.0 / assets/Square44x44Logo.targetsize-256_altform-unplated.png",
+      "sha256": "2b001fb1f4e7d76e4d459c2ad8f9739e963ffc1c2137abcfffe8da3ee7775f7c",
+      "bytes": 9264
+    }
+  ]
+}

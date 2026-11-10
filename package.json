@@ -1,0 +1,60 @@
+{
+  "name": "dsh-ai-hub",
+  "version": "0.5.18",
+  "private": true,
+  "type": "module",
+  "description": "Unified AI providers, subagents, quota and project office for DSH.",
+  "license": "MIT",
+  "scripts": {
+    "test": "node selftest.mjs && node --test p0.test.mjs catalog.test.mjs client.test.mjs login-actions.test.mjs native-config.test.mjs connection.test.mjs usage-store.test.mjs usage-host.test.mjs",
+    "check": "node validate.mjs"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "assets/platforms/*",
+    "index.js",
+    "catalog.mjs",
+    "runtime.mjs",
+    "usage-store.mjs",
+    "usage-store.test.mjs",
+    "usage-host.test.mjs",
+    "cn-client.mjs",
+    "p0.mjs",
+    "workbuddy.mjs",
+    "client.js",
+    "verify.mjs",
+    "selftest.mjs",
+    "p0.test.mjs",
+    "catalog.test.mjs",
+    "validate.mjs",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "build.mjs",
+    "client.test.mjs",
+    "login-actions.mjs",
+    "login-actions.test.mjs",
+    "native-config.mjs",
+    "native-config.test.mjs",
+    "connection.test.mjs"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-model-selection"
+      ]
+    }
+  }
+}

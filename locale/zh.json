@@ -1,0 +1,23 @@
+{
+  "meta": {
+    "title": "模型管理",
+    "description": "独立管理模型渠道、账号、额度、路由与网关。"
+  },
+  "ui": {
+    "modelManagement": "模型管理",
+    "pickerPlatform": "平台",
+    "pickerModel": "模型",
+    "pickerEffort": "推理等级",
+    "pickerDefault": "平台默认",
+    "pickerDeepSeek": "DeepSeek 账号",
+    "pickerChoose": "选择模型",
+    "pickerSessionBusy": "会话正在其他窗口使用，请稍后重试",
+    "pickerFailed": "模型选择失败",
+    "pickerSearch": "搜索模型名称或 ID",
+    "pickerNoMatch": "没有匹配的模型",
+    "pickerEmpty": "暂无可用模型",
+    "pickerBack": "返回",
+    "pickerLoading": "正在读取模型目录…",
+    "pickerRetry": "重新读取模型目录"
+  }
+}

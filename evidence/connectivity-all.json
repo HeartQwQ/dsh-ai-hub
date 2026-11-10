@@ -1,0 +1,146 @@
+{
+  "at": "2026-11-04T15:33:17.598Z",
+  "scope": "Standalone bundle code with real CLIs; not installed Host/tool/UI verification",
+  "calls": [
+    {
+      "platform": "workbuddy-cn",
+      "channel": "model",
+      "ok": false,
+      "answer": "",
+      "chunks": 1,
+      "finish": {
+        "kind": "error",
+        "failure": {
+          "code": "AUTH",
+          "message": "AUTH_BOUNDARY: WorkBuddy CN HTTP 401; desktop API authentication is unavailable without credential access / 未接入桌面鉴权"
+        }
+      },
+      "elapsedMs": 1270
+    },
+    {
+      "platform": "workbuddy-cn",
+      "channel": "subagent",
+      "ok": false,
+      "answer": "",
+      "stopReason": "error",
+      "error": "Authentication required. Please use /login command to sign in to your account",
+      "elapsedMs": 2068
+    },
+    {
+      "platform": "antigravity",
+      "channel": "model",
+      "ok": true,
+      "answer": "OK\n",
+      "chunks": 4,
+      "finish": {
+        "kind": "stop"
+      },
+      "elapsedMs": 12947
+    },
+    {
+      "platform": "cursor",
+      "channel": "model",
+      "ok": true,
+      "answer": "OK",
+      "chunks": 4,
+      "finish": {
+        "kind": "stop"
+      },
+      "elapsedMs": 22141
+    },
+    {
+      "ok": true,
+      "platform": "codex",
+      "channel": "subagent",
+      "answer": "OK",
+      "at": "2026-11-04T15:33:17.599Z",
+      "enabled": true,
+      "model": "gpt-5.6-sol",
+      "available": true,
+      "state": "connected",
+      "checkedAt": "2026-11-04T15:33:42.642Z",
+      "latencyMs": 25043,
+      "lastError": null,
+      "modelChannel": "text",
+      "subagentChannel": "builtin",
+      "elapsedMs": 25043
+    },
+    {
+      "platform": "antigravity",
+      "channel": "subagent",
+      "ok": true,
+      "answer": "OK\n",
+      "stopReason": "completed",
+      "elapsedMs": 13024
+    },
+    {
+      "platform": "cursor",
+      "channel": "subagent",
+      "ok": true,
+      "answer": "OK",
+      "stopReason": "completed",
+      "elapsedMs": 15213
+    }
+  ],
+  "quotas": [
+    {
+      "platform": "workbuddy-cn",
+      "kind": "credits",
+      "source": "unavailable",
+      "updatedAt": "2026-11-04T15:33:20.945Z",
+      "stale": true,
+      "region": "cn",
+      "credits": {
+        "remaining": null,
+        "multiplier": null
+      },
+      "note": "cn-auth-unavailable",
+      "attemptedAt": "2026-11-04T15:33:20.945Z",
+      "error": {
+        "code": "AUTH",
+        "message": "AUTH_BOUNDARY: WorkBuddy CN HTTP 401; desktop API authentication is unavailable without credential access / 未接入桌面鉴权"
+      }
+    },
+    {
+      "platform": "codex",
+      "kind": "window",
+      "source": "codex-app-server",
+      "updatedAt": "2026-11-04T15:33:42.642Z",
+      "stale": false,
+      "windows": [
+        {
+          "id": "5h",
+          "usedPercent": 17,
+          "windowDurationMins": 300,
+          "resetAt": "2026-11-04T20:14:18.000Z"
+        },
+        {
+          "id": "weekly",
+          "usedPercent": 9,
+          "windowDurationMins": 10080,
+          "resetAt": "2026-11-11T10:13:52.000Z"
+        }
+      ],
+      "plan": "plus",
+      "resetCredits": 2
+    },
+    {
+      "platform": "antigravity",
+      "kind": "unknown",
+      "source": "antigravity-cli",
+      "updatedAt": "2026-11-04T15:33:43.578Z",
+      "stale": false,
+      "modelCount": 13,
+      "note": "antigravity-panel"
+    },
+    {
+      "platform": "cursor",
+      "kind": "subscription",
+      "source": "cursor-cli",
+      "updatedAt": "2026-11-04T15:33:54.961Z",
+      "stale": false,
+      "tier": "Pro",
+      "note": "cursor-panel"
+    }
+  ]
+}

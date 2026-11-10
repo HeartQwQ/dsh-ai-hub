@@ -1,0 +1,15 @@
+{
+  "at": "2026-11-04T15:41:16.674Z",
+  "idempotentLocaleBuild": true,
+  "sha256": {
+    "package.json": "9af5ef3fc408a8e317a5b415d1685b87e559acad4bbdadc7744581b21d01742a",
+    "cordis.patch.yml": "8a45ac0399e8757113b0d88eb17b4e0b37db35f058c5ed24421e72890507aba8",
+    "index.js": "be5bee5b5d524adac589f2bdc7c324de22be3b1f3e86f969ef9f078a0657f512",
+    "runtime.mjs": "5be397d3f0ccb43ac946e9a4039111ab41f6f837d5d2548f4887d27c5152cc8f",
+    "cn-client.mjs": "c659b63d926f2487c2d71ecc4d143a5b6fd8c40ac7103cf4487da162fe93cd50",
+    "client.js": "9657eeff80477905eb5b3960e0b01179c3d7a88e3b3152f8ba9328029a52901c",
+    "locale/zh.json": "caca438ff26fc379f104779d94e39ebd5455ac0c1c781786aff9c4a4b8ce9bdc",
+    "locale/en.json": "6c48fd26c0a365a8c805df9a6c5c085881dbcfca1fa39557902016b58e33ef12",
+    "icon.svg": "5c344886481fd2b19cfd0ef7b317fee4c06233345a858b5807b8f6d610341d2a"
+  }
+}

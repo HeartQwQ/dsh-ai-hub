@@ -1,0 +1,52 @@
+{
+  "at": "2026-11-04T15:40:39.024Z",
+  "scope": "Standalone bundle code with real CLIs; not installed Host/tool/UI verification",
+  "calls": [
+    {
+      "platform": "workbuddy-cn",
+      "channel": "model",
+      "ok": false,
+      "answer": "",
+      "chunks": 1,
+      "finish": {
+        "kind": "error",
+        "failure": {
+          "code": "AUTH",
+          "message": "AUTH_BOUNDARY: WorkBuddy CN HTTP 401; desktop API authentication is unavailable without credential access / 未接入桌面鉴权"
+        }
+      },
+      "model": "kimi-k3",
+      "elapsedMs": 164
+    },
+    {
+      "platform": "workbuddy-cn",
+      "channel": "subagent",
+      "ok": false,
+      "answer": "",
+      "stopReason": "error",
+      "error": "Authentication required. Please use /login command to sign in to your account",
+      "model": "kimi-k3",
+      "elapsedMs": 12912
+    }
+  ],
+  "quotas": [
+    {
+      "platform": "workbuddy-cn",
+      "kind": "credits",
+      "source": "workbuddy-cn-billing-api",
+      "updatedAt": "2026-11-04T15:40:52.100Z",
+      "stale": true,
+      "region": "cn",
+      "credits": {
+        "remaining": null,
+        "multiplier": null
+      },
+      "note": "cn-auth-unavailable",
+      "attemptedAt": "2026-11-04T15:40:52.100Z",
+      "error": {
+        "code": "AUTH",
+        "message": "AUTH_BOUNDARY: WorkBuddy CN HTTP 401; desktop API authentication is unavailable without credential access / 未接入桌面鉴权"
+      }
+    }
+  ]
+}

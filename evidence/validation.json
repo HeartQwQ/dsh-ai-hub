@@ -1,0 +1,42 @@
+{
+  "ok": true,
+  "checks": {
+    "manifest": true,
+    "patchSubset": true,
+    "uniqueRows": [
+      "ai-hub",
+      "ai-hub-tool-subagent-cursor",
+      "ai-hub-tool-subagent-antigravity",
+      "ai-hub-tool-subagent-workbuddy"
+    ],
+    "displayResources": true,
+    "locales": true,
+    "themeTokens": true,
+    "onlyReactClientImport": true,
+    "nodeCheck": [
+      "index.js",
+      "catalog.mjs",
+      "runtime.mjs",
+      "usage-store.mjs",
+      "usage-store.test.mjs",
+      "usage-host.test.mjs",
+      "cn-client.mjs",
+      "p0.mjs",
+      "workbuddy.mjs",
+      "client.js",
+      "verify.mjs",
+      "selftest.mjs",
+      "p0.test.mjs",
+      "catalog.test.mjs",
+      "validate.mjs",
+      "build.mjs",
+      "client.test.mjs",
+      "login-actions.mjs",
+      "login-actions.test.mjs",
+      "native-config.mjs",
+      "native-config.test.mjs",
+      "connection.test.mjs"
+    ]
+  },
+  "limitations": "Static bundle/subset validation only; no installation, live Loader, browser, DOM or visual verification."
+}

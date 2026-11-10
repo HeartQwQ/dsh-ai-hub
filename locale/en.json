@@ -1,0 +1,23 @@
+{
+  "meta": {
+    "title": "Model management",
+    "description": "Manage model providers, accounts, quota, routing and gateways."
+  },
+  "ui": {
+    "modelManagement": "Model management",
+    "pickerPlatform": "Platform",
+    "pickerModel": "Model",
+    "pickerEffort": "Reasoning effort",
+    "pickerDefault": "Provider default",
+    "pickerDeepSeek": "DeepSeek account",
+    "pickerChoose": "Select model",
+    "pickerSessionBusy": "This conversation is in use in another window",
+    "pickerFailed": "Couldn't update model selection",
+    "pickerSearch": "Search model name or ID",
+    "pickerNoMatch": "No matching models",
+    "pickerEmpty": "No models available",
+    "pickerBack": "Back",
+    "pickerLoading": "Loading models…",
+    "pickerRetry": "Retry loading models"
+  }
+}

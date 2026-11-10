@@ -1,0 +1,22 @@
+- insert:
+    - id: ai-hub
+      name: dsh-ai-hub
+      config: {}
+    - id: ai-hub-tool-subagent-cursor
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: cursor
+        toolName: subagent_cursor
+        maxDepth: provider-managed
+    - id: ai-hub-tool-subagent-antigravity
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: antigravity
+        toolName: subagent_antigravity
+        maxDepth: provider-managed
+    - id: ai-hub-tool-subagent-workbuddy
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: workbuddy
+        toolName: subagent_workbuddy
+        maxDepth: provider-managed
