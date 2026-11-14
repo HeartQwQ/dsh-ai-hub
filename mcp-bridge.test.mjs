@@ -14,7 +14,7 @@ import {
   setupMcpWorkspace,
   toMcpToolDescriptor
 } from './mcp-bridge.mjs';
-import { createAdapter, createHub } from './index.js';
+import { createAdapter, createHub, flattenWithMeta, meterStream } from './index.js';
 import { createWorkbuddyAdapter } from './workbuddy-chat.mjs';
 import { createUsageStore } from './usage-store.mjs';
 
@@ -695,4 +695,52 @@ test('多步流式 JSONL 原始体积超过 2MB 但正文未超限时不会误�
   assert.equal(chunks.filter(c => c.type === 'text-delta').map(c => c.text).join(''), 'Large stream completed');
   assert.equal(chunks.at(-1).type, 'finish');
   assert.equal(chunks.at(-1).reason.kind, 'stop');
+});
+
+test('messages 中的 role:system 会提取到系统提示预算并保留在截断标记之前（含 flattenWithMeta 与 meterStream）', async () => {
+  const sysText = 'DSH_SYSTEM_POLICY_ANCHOR: Always use host workspace.';
+  const msgs = [
+    { role: 'system', content: sysText },
+    { role: 'user', content: 'FIRST_USER_GOAL: Build archify architecture diagrams' },
+    ...Array.from({ length: 12 }, (_, idx) => ({
+      role: idx % 2 === 0 ? 'assistant' : 'user',
+      content: `MIDDLE_${idx}_` + 'z'.repeat(1800)
+    })),
+    { role: 'user', content: 'LATEST_USER_REQUEST' }
+  ];
+
+  const mcpMeta = formatMcpPrompt({ tools: [{ name: 'read' }], messages: msgs }, 12000);
+  const sysPos = mcpMeta.prompt.indexOf(sysText);
+  const omittedPos = mcpMeta.prompt.indexOf('[Earlier conversation was omitted to fit the CLI input limit.]');
+  assert.notEqual(sysPos, -1);
+  assert.notEqual(omittedPos, -1);
+  assert(sysPos < omittedPos, 'system message must stay in system section before omitted marker');
+  assert(mcpMeta.prompt.includes('mcp-*'));
+  assert(mcpMeta.prompt.includes('FIRST_USER_GOAL'));
+  assert(mcpMeta.prompt.endsWith('user: LATEST_USER_REQUEST'));
+  assert(mcpMeta.systemChars >= sysText.length);
+
+  const flatMeta = flattenWithMeta({ messages: msgs }, 12000);
+  const flatSysPos = flatMeta.prompt.indexOf(sysText);
+  const flatOmittedPos = flatMeta.prompt.indexOf('[Earlier conversation was omitted to fit the CLI input limit.]');
+  assert.notEqual(flatSysPos, -1);
+  assert.notEqual(flatOmittedPos, -1);
+  assert(flatSysPos < flatOmittedPos);
+  assert.equal(flatMeta.systemChars, sysText.length);
+
+  const recorded = [];
+  const metered = meterStream(r => recorded.push(r), 'cursor');
+  async function* singleStop() {
+    yield { type: 'text-delta', text: 'ok' };
+    yield { type: 'finish', reason: { kind: 'stop' } };
+  }
+  for await (const _ of metered(singleStop(), {
+    model: 'grok-4.7',
+    messages: [{ role: 'system', content: 'SYS_PART' }, { role: 'user', content: 'USR' }]
+  })) {
+    // drain stream
+  }
+  assert.equal(recorded.length, 1);
+  assert.equal(recorded[0].systemChars, 'SYS_PART'.length);
+  assert.equal(recorded[0].historyChars, 'USR'.length);
 });

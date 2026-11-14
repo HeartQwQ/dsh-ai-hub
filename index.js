@@ -46,13 +46,26 @@ export function normalizeSettings(raw={}){
  return out;
 }
 export const CLI_INPUT_BUDGET=24000;
+const blockText=c=>typeof c==='string'?c:Array.isArray(c)?c.filter(b=>b?.type==='text').map(b=>b.text??'').join('\n'):'';
+function partitionMessages(options={},toText=blockText){
+ const systemParts=[],messages=[];
+ const top=toText(options.system??options.systemPrompt??'');
+ if(top&&top.trim())systemParts.push(top);
+ for(const m of options.messages??[]){
+  if(!m||typeof m!=='object')continue;
+  if(m.role==='system'){const text=toText(m.content);if(text&&text.trim())systemParts.push(text);}
+  else messages.push(m);
+ }
+ return {system:systemParts.join('\n\n'),messages};
+}
 export function flattenWithMeta(options,budget=CLI_INPUT_BUDGET){
  // CLI models never emit DSH tool calls; DSH tool schemas are deliberately not forwarded.
  // The CLI backend still ships its own file/shell tools, so no text-only directive is
  // prepended: an earlier "text conversation only" line suppressed those tools outright.
  const blocks=c=>typeof c==='string'?c:Array.isArray(c)?c.map(b=>b.type==='text'?b.text:`[${b.type} omitted]`).join('\n'):'';
- const system=blocks(options.system??options.systemPrompt??'').trim();
- const turns=(options.messages??[]).map(m=>`${m.role}: ${blocks(m.content)}`).filter(text=>text.length>0);
+ const {system:rawSystem,messages}=partitionMessages(options,blocks);
+ const system=rawSystem.trim();
+ const turns=messages.map(m=>`${m.role}: ${blocks(m.content)}`).filter(text=>text.length>0);
  // Some hosts build a very large system prompt (tool catalogue, agent guide). The
  // CLI transports cap a single prompt at 26000 characters, so keep a bounded
  // system excerpt plus the newest turns and drop older history explicitly.
@@ -69,7 +82,6 @@ export function flattenWithMeta(options,budget=CLI_INPUT_BUDGET){
 export function flatten(options,budget=CLI_INPUT_BUDGET){
  return flattenWithMeta(options,budget).prompt;
 }
-const blockText=c=>typeof c==='string'?c:Array.isArray(c)?c.filter(b=>b?.type==='text').map(b=>b.text??'').join('\n'):'';
 const finiteNumber=v=>typeof v==='number'&&Number.isFinite(v)?v:undefined;
 // Host usage events split input into uncached / cache-read / cache-write parts.
 function hostUsageTokens(usage){
@@ -82,7 +94,7 @@ function hostUsageTokens(usage){
 /** Wraps a proxied llm.stream so calls that bypass hub.call still reach the usage store. */
 export function meterStream(record,platform){
  return (source,options={})=>(async function*(){
-  const started=Date.now(),system=blockText(options.system??options.systemPrompt??''),history=(options.messages??[]).map(m=>blockText(m?.content)).join('\n');
+  const started=Date.now(),{system,messages}=partitionMessages(options,blockText),history=messages.map(m=>blockText(m?.content)).join('\n');
   let firstText=null,output='',usage=null,status=null,completed=false;
   try{
    for await(const event of await source){

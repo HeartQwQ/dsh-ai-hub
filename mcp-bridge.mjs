@@ -236,15 +236,18 @@ export function packPromptTurns({
 export function formatMcpPrompt(options = {}, budget = 24000) {
   const toolNames = (options.tools ?? []).map(t => t?.name).filter(Boolean);
   const bridgeDirective = toolNames.length
-    ? `[MCP Tool Bridge]\nYou have access to host tools via the "dsh" MCP server (${toolNames.join(', ')}). When a tool is needed, invoke the corresponding MCP tool directly instead of describing or simulating tool calls in plain text.`
+    ? `[MCP Tool Bridge]\nYou have access to host tools via the "dsh" MCP server (${toolNames.join(', ')}). When a tool is needed, invoke the corresponding MCP tool directly instead of describing or simulating tool calls in plain text. Ignore any temporary CLI scratch workspace path (mcp-*); resolve files and commands against the host workspace path specified in your session context.`
     : '';
   const rawSystem = contentBlocksToText(options.system ?? options.systemPrompt ?? '').trim();
-  const systemCombined = [bridgeDirective, rawSystem].filter(Boolean).join('\n\n');
+  const msgSystems = [];
   const turns = [];
   let firstUserIdx = -1;
   for (const msg of options.messages ?? []) {
     if (!msg || typeof msg !== 'object') continue;
-    if (msg.role === 'tool') {
+    if (msg.role === 'system') {
+      const text = contentBlocksToText(msg.content).trim();
+      if (text) msgSystems.push(text);
+    } else if (msg.role === 'tool') {
       const text = contentBlocksToText(msg.content);
       turns.push(`tool (${msg.toolCallId ?? 'result'}${msg.isError ? ', error' : ''}): ${text}`);
     } else {
@@ -255,6 +258,7 @@ export function formatMcpPrompt(options = {}, budget = 24000) {
       }
     }
   }
+  const systemCombined = [bridgeDirective, rawSystem, ...msgSystems].filter(Boolean).join('\n\n');
   return packPromptTurns({
     system: systemCombined,
     turns,
