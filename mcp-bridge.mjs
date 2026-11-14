@@ -127,64 +127,100 @@ function clipMiddle(text, limit) {
   return text.slice(0, head) + marker + text.slice(-tail);
 }
 
-export function formatMcpPrompt(options = {}, budget = 24000) {
-  const toolNames = (options.tools ?? []).map(t => t?.name).filter(Boolean);
-  const bridgeDirective = toolNames.length
-    ? `[MCP Tool Bridge]\nYou have access to host tools via the "dsh" MCP server (${toolNames.join(', ')}). When a tool is needed, invoke the corresponding MCP tool directly instead of describing or simulating tool calls in plain text.`
-    : '';
-  const rawSystem = contentBlocksToText(options.system ?? options.systemPrompt ?? '').trim();
-  const systemCombined = [bridgeDirective, rawSystem].filter(Boolean).join('\n\n');
-  const turns = [];
-  for (const msg of options.messages ?? []) {
-    if (!msg || typeof msg !== 'object') continue;
-    if (msg.role === 'tool') {
-      const text = contentBlocksToText(msg.content);
-      turns.push(`tool (${msg.toolCallId ?? 'result'}${msg.isError ? ', error' : ''}): ${text}`);
-    } else {
-      const text = contentBlocksToText(msg.content);
-      if (text) turns.push(`${msg.role}: ${text}`);
-    }
-  }
-  const originalChars = systemCombined.length + turns.reduce((sum, t) => sum + t.length, 0);
+export function packPromptTurns({
+  system = '',
+  turns = [],
+  firstUserIdx = -1,
+  budget = 24000,
+  systemMaxChars = 6000,
+  systemRatio = 0.4,
+  pinFirstUser = false,
+  emptyFallback = ''
+} = {}) {
+  const originalChars = system.length + turns.reduce((sum, t) => sum + t.length, 0);
   let remaining = Math.max(0, budget - 2);
-  const systemBudget = Math.min(7000, Math.floor(remaining * 0.42));
-  const systemText = systemCombined ? clipMiddle(systemCombined, systemBudget) : '';
+  const systemBudget = Math.min(systemMaxChars, Math.floor(remaining * systemRatio));
+  const systemText = system ? clipMiddle(system, systemBudget) : '';
   remaining = Math.max(0, remaining - systemText.length - 2);
+  const maxTurnChars = Math.max(1200, Math.floor(budget * 0.35));
   const kept = [];
   let omitted = false;
+  let firstKeptIdx = turns.length;
   for (let i = turns.length - 1; i >= 0; i -= 1) {
-    const turn = turns[i];
-    if (turn.length + 2 <= remaining) {
-      kept.unshift(turn);
-      remaining -= turn.length + 2;
+    const rawTurn = turns[i];
+    const candidate = i < turns.length - 1 && rawTurn.length > maxTurnChars
+      ? clipMiddle(rawTurn, maxTurnChars)
+      : rawTurn;
+    if (candidate.length < rawTurn.length) omitted = true;
+    if (candidate.length + 2 <= remaining) {
+      kept.unshift({ raw: rawTurn, text: candidate });
+      firstKeptIdx = i;
+      remaining -= candidate.length + 2;
       continue;
     }
-    if (kept.length === 0 && remaining > 0) {
-      const clipped = clipMiddle(turn, remaining - 2);
+    if (remaining > 200 || (kept.length === 0 && remaining > 2)) {
+      const clipped = clipMiddle(rawTurn, remaining - 2);
       if (clipped) {
-        kept.unshift(clipped);
-        remaining = 0;
+        kept.unshift({ raw: rawTurn, text: clipped });
+        firstKeptIdx = i;
+        remaining = Math.max(0, remaining - clipped.length - 2);
       }
-      omitted = true;
-    } else {
-      omitted = true;
     }
+    omitted = true;
     break;
   }
-  const includedChars = systemText.length + kept.reduce((sum, t) => sum + t.length, 0);
-  const historyChars = kept.reduce((sum, t) => sum + t.length, 0);
-  const omittedChars = Math.max(0, originalChars - includedChars);
-  const note = '[Earlier conversation was omitted to fit the CLI input limit.]';
-  if (omitted) {
-    while (kept.length > 1 && remaining < note.length + 2) {
-      remaining += kept.shift().length + 2;
+
+  const makeRoom = (needed, { minDropKeep = 1 } = {}) => {
+    while (kept.length >= 1 && remaining < needed) {
+      if (kept[0].text.length > (needed - remaining) + 400) {
+        const targetLen = kept[0].text.length - (needed - remaining);
+        const shrunk = clipMiddle(kept[0].raw, targetLen);
+        if (shrunk && shrunk.length < kept[0].text.length) {
+          remaining += kept[0].text.length - shrunk.length;
+          kept[0].text = shrunk;
+          continue;
+        }
+      }
+      if (kept.length <= minDropKeep) break;
+      remaining += kept.shift().text.length + 2;
     }
+  };
+
+  const note = '[Earlier conversation was omitted to fit the CLI input limit.]';
+  let hasNote = false;
+  let pinnedGoal = '';
+  if (omitted) {
+    makeRoom(note.length + 2, { minDropKeep: 1 });
     if (remaining >= note.length + 2) {
-      kept.unshift(note);
+      hasNote = true;
       remaining -= note.length + 2;
     }
+    if (pinFirstUser && firstUserIdx >= 0 && firstUserIdx < firstKeptIdx) {
+      const goalLimit = Math.min(1500, Math.floor(budget * 0.1));
+      const targetGoal = clipMiddle(turns[firstUserIdx], goalLimit);
+      if (targetGoal) {
+        makeRoom(targetGoal.length + 2, { minDropKeep: 2 });
+        if (targetGoal.length + 2 <= remaining || remaining >= 120) {
+          pinnedGoal = targetGoal.length + 2 <= remaining
+            ? targetGoal
+            : clipMiddle(turns[firstUserIdx], Math.max(0, remaining - 2));
+          if (pinnedGoal) remaining -= pinnedGoal.length + 2;
+        }
+      }
+    }
   }
-  const prompt = [...(systemText ? [systemText] : []), ...kept].join('\n\n') || 'user: (empty)';
+
+  const keptTexts = kept.map(item => item.text);
+  const historyParts = [...(pinnedGoal ? [pinnedGoal] : []), ...keptTexts];
+  const historyChars = historyParts.reduce((sum, t) => sum + t.length, 0);
+  const includedChars = systemText.length + historyChars;
+  const omittedChars = Math.max(0, originalChars - includedChars);
+  const promptTurns = [
+    ...(pinnedGoal ? [pinnedGoal] : []),
+    ...(hasNote ? [note] : []),
+    ...keptTexts
+  ];
+  const prompt = [...(systemText ? [systemText] : []), ...promptTurns].join('\n\n') || emptyFallback;
   const output = prompt.length > budget ? clipMiddle(prompt, budget) : prompt;
   return {
     prompt: output,
@@ -194,6 +230,40 @@ export function formatMcpPrompt(options = {}, budget = 24000) {
     historyChars,
     omittedChars
   };
+}
+
+export function formatMcpPrompt(options = {}, budget = 24000) {
+  const toolNames = (options.tools ?? []).map(t => t?.name).filter(Boolean);
+  const bridgeDirective = toolNames.length
+    ? `[MCP Tool Bridge]\nYou have access to host tools via the "dsh" MCP server (${toolNames.join(', ')}). When a tool is needed, invoke the corresponding MCP tool directly instead of describing or simulating tool calls in plain text.`
+    : '';
+  const rawSystem = contentBlocksToText(options.system ?? options.systemPrompt ?? '').trim();
+  const systemCombined = [bridgeDirective, rawSystem].filter(Boolean).join('\n\n');
+  const turns = [];
+  let firstUserIdx = -1;
+  for (const msg of options.messages ?? []) {
+    if (!msg || typeof msg !== 'object') continue;
+    if (msg.role === 'tool') {
+      const text = contentBlocksToText(msg.content);
+      turns.push(`tool (${msg.toolCallId ?? 'result'}${msg.isError ? ', error' : ''}): ${text}`);
+    } else {
+      const text = contentBlocksToText(msg.content);
+      if (text) {
+        if (firstUserIdx === -1 && msg.role === 'user') firstUserIdx = turns.length;
+        turns.push(`${msg.role}: ${text}`);
+      }
+    }
+  }
+  return packPromptTurns({
+    system: systemCombined,
+    turns,
+    firstUserIdx,
+    budget,
+    systemMaxChars: 7000,
+    systemRatio: 0.42,
+    pinFirstUser: true,
+    emptyFallback: 'user: (empty)'
+  });
 }
 
 export function normalizeCliUsage(raw) {
@@ -334,6 +404,7 @@ export function buildMcpCliCommand(platform, prompt, model, reasoningEffort, ses
     const args = [
       '-p',
       '--output-format', 'stream-json',
+      '--include-partial-messages',
       '--no-session-persistence',
       '--tools', '',
       '--strict-mcp-config',
@@ -481,6 +552,7 @@ export function createMcpBridge({
         res.writeHead(202).end();
         return;
       }
+      session.turn?.touchTimer?.();
       if (msg.id === undefined || msg.id === null) {
         res.writeHead(202).end();
         return;
@@ -675,6 +747,7 @@ export function createMcpBridge({
       if (!event || typeof event !== 'object') return;
       if (event.usage) session.usage = event.usage;
       const turn = session.turn;
+      turn?.touchTimer?.();
       if (platform === 'antigravity') {
         if (event.event === 'result') {
           session.terminalResult = true;
@@ -716,6 +789,10 @@ export function createMcpBridge({
         : event.type === 'content_block_delta'
           ? event.delta
           : undefined;
+      if (delta?.type === 'thinking_delta' && typeof delta.thinking === 'string') {
+        turn?.appendReasoning(delta.thinking);
+        return;
+      }
       if (delta?.type === 'text_delta' && typeof delta.text === 'string') {
         turn?.appendText(delta.text);
         return;
@@ -827,6 +904,15 @@ export function createMcpBridge({
           resolveWake();
         }
       },
+      touchTimer() {
+        if (turn.done || turn.suspended) return;
+        clearTimeout(session.turnTimer);
+        session.turnTimer = setTimeout(() => {
+          turn.timedOut = true;
+          session.destroy(new Error('TIMEOUT'));
+        }, turnTimeoutMs);
+        session.turnTimer.unref?.();
+      },
       closeOpenBlock() {
         if (!turn.openBlock) return;
         turn.enqueue({
@@ -915,12 +1001,7 @@ export function createMcpBridge({
         };
         signal?.addEventListener('abort', onAbort, { once: true });
         if (signal?.aborted) onAbort();
-        clearTimeout(session.turnTimer);
-        session.turnTimer = setTimeout(() => {
-          turn.timedOut = true;
-          session.destroy(new Error('TIMEOUT'));
-        }, turnTimeoutMs);
-        session.turnTimer.unref?.();
+        turn.touchTimer();
         try {
           while (!turn.done || queue.length > 0) {
             if (queue.length > 0) {

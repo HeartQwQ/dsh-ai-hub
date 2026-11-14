@@ -3,7 +3,7 @@ import { normalizeModels, parseCliModels, selectModels, createProxyAdapter, reco
 import { createP0 } from './p0.mjs';
 import { createWorkbuddy } from './workbuddy.mjs';
 import { createWorkbuddyAdapter } from './workbuddy-chat.mjs';
-import { createMcpBridge, extractPendingToolResults, formatMcpPrompt } from './mcp-bridge.mjs';
+import { createMcpBridge, extractPendingToolResults, formatMcpPrompt, packPromptTurns } from './mcp-bridge.mjs';
 import { createLoginActions } from './login-actions.mjs';
 import { nativeProviderSnapshot } from './native-config.mjs';
 import { createUsageStore, createFileBackend, fromGatewayRecord, toGatewayRecord } from './usage-store.mjs';
@@ -46,14 +46,6 @@ export function normalizeSettings(raw={}){
  return out;
 }
 export const CLI_INPUT_BUDGET=24000;
-function clipMiddle(text,limit){
- if(limit<=0)return '';
- if(text.length<=limit)return text;
- const marker=`\n…[${text.length-limit} characters omitted]…\n`;
- if(marker.length>=limit)return text.slice(0,limit);
- const room=limit-marker.length,head=Math.floor(room*0.55),tail=room-head;
- return text.slice(0,head)+marker+text.slice(-tail);
-}
 export function flattenWithMeta(options,budget=CLI_INPUT_BUDGET){
  // CLI models never emit DSH tool calls; DSH tool schemas are deliberately not forwarded.
  // The CLI backend still ships its own file/shell tools, so no text-only directive is
@@ -61,34 +53,18 @@ export function flattenWithMeta(options,budget=CLI_INPUT_BUDGET){
  const blocks=c=>typeof c==='string'?c:Array.isArray(c)?c.map(b=>b.type==='text'?b.text:`[${b.type} omitted]`).join('\n'):'';
  const system=blocks(options.system??options.systemPrompt??'').trim();
  const turns=(options.messages??[]).map(m=>`${m.role}: ${blocks(m.content)}`).filter(text=>text.length>0);
- const originalChars=system.length+turns.reduce((sum,text)=>sum+text.length,0);
  // Some hosts build a very large system prompt (tool catalogue, agent guide). The
  // CLI transports cap a single prompt at 26000 characters, so keep a bounded
  // system excerpt plus the newest turns and drop older history explicitly.
- let remaining=Math.max(0,budget-2);
- const systemBudget=Math.min(6000,Math.floor(remaining*0.4));
- const systemText=system?clipMiddle(system,systemBudget):'';
- remaining=Math.max(0,remaining-systemText.length-2);
- const kept=[];
- let omitted=false;
- for(let i=turns.length-1;i>=0;i-=1){
-  const turn=turns[i];
-  if(turn.length+2<=remaining){kept.unshift(turn);remaining-=turn.length+2;continue;}
-  if(kept.length===0&&remaining>0){const clipped=clipMiddle(turn,remaining-2);if(clipped){kept.unshift(clipped);remaining=0;}omitted=true;}
-  else omitted=true;
-  break;
- }
- const includedChars=systemText.length+kept.reduce((sum,text)=>sum+text.length,0);
- const historyChars=kept.reduce((sum,text)=>sum+text.length,0);
- const omittedChars=Math.max(0,originalChars-includedChars);
- const note='[Earlier conversation was omitted to fit the CLI input limit.]';
- if(omitted){
-  while(kept.length>1&&remaining<note.length+2){remaining+=kept.shift().length+2;}
-  if(remaining>=note.length+2){kept.unshift(note);remaining-=note.length+2;}
- }
- const prompt=[...(systemText?[systemText]:[]),...kept].join('\n\n');
- const output=prompt.length>budget?clipMiddle(prompt,budget):prompt;
- return {prompt:output,inputChars:output.length,inputBudget:budget,systemChars:systemText.length,historyChars,omittedChars};
+ return packPromptTurns({
+  system,
+  turns,
+  budget,
+  systemMaxChars:6000,
+  systemRatio:0.4,
+  pinFirstUser:false,
+  emptyFallback:''
+ });
 }
 export function flatten(options,budget=CLI_INPUT_BUDGET){
  return flattenWithMeta(options,budget).prompt;

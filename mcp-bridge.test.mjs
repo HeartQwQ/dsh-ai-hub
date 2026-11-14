@@ -99,6 +99,7 @@ test('setupMcpWorkspace 与 buildMcpCliCommand 为 Cursor 和 Antigravity 生成
   );
   assert.equal(wbCmd.command, 'node.exe');
   assert.equal(wbCmd.args[0], 'codebuddy-lite-wb.mjs');
+  assert(wbCmd.args.includes('--include-partial-messages'));
   assert(wbCmd.args.includes('--strict-mcp-config'));
   assert(wbCmd.args.includes('--no-session-persistence'));
   assert(wbCmd.args.includes('-y'));
@@ -555,4 +556,102 @@ test('WorkBuddy CLI MCP 桥接：注入 CODEBUDDY_AUTH_TOKEN、thinking 解析�
   }
   assert.equal(t2.filter(c => c.type === 'text-delta').map(c => c.text).join(''), 'Magic: 424242');
   assert.equal(t2.at(-1).reason.kind, 'stop');
+});
+
+test('formatMcpPrompt 在超大单轮后接续“继续”时保留原始目标与近期上下文', () => {
+  const bigTurn = 'TOOL_HEAD_MARK ' + 'x'.repeat(39000) + ' SUBAGENT_SETTLED_TAIL';
+  const shortHistory = formatMcpPrompt({
+    system: 'host-system-prompt',
+    messages: [
+      { role: 'user', content: 'GOAL_ANCHOR: Inspect all DSH plugins' },
+      { role: 'assistant', content: 'ASSESSED_EARLIER: Scanned antigravity & cursor.' },
+      { role: 'tool', toolCallId: 'c1', content: bigTurn },
+      { role: 'user', content: '继续' }
+    ]
+  }, 24000);
+  assert.equal(shortHistory.inputChars <= 24000, true);
+  assert(shortHistory.prompt.includes('GOAL_ANCHOR: Inspect all DSH plugins'));
+  assert(shortHistory.prompt.includes('ASSESSED_EARLIER: Scanned antigravity & cursor.'));
+  assert(shortHistory.prompt.includes('TOOL_HEAD_MARK'));
+  assert(shortHistory.prompt.includes('SUBAGENT_SETTLED_TAIL'));
+  assert(shortHistory.prompt.endsWith('user: 继续'));
+  assert.equal(shortHistory.omittedChars > 0, true);
+
+  const manyTurns = [
+    { role: 'user', content: 'GOAL_ANCHOR: Inspect all DSH plugins in workspace' },
+    ...Array.from({ length: 14 }, (_, idx) => ({
+      role: idx % 2 === 0 ? 'assistant' : 'user',
+      content: `OLD_TURN_${idx}_` + 'm'.repeat(1600)
+    })),
+    { role: 'assistant', content: 'RECENT_BEFORE_40K: agent-1 started scanning plugins.' },
+    { role: 'user', content: bigTurn },
+    { role: 'user', content: '继续' }
+  ];
+  const deepHistory = formatMcpPrompt({ system: 'host-system-prompt', messages: manyTurns }, 24000);
+  assert.equal(deepHistory.inputChars <= 24000, true);
+  assert(deepHistory.prompt.includes('GOAL_ANCHOR: Inspect all DSH plugins in workspace'));
+  assert(deepHistory.prompt.includes('[Earlier conversation was omitted to fit the CLI input limit.]'));
+  assert(deepHistory.prompt.includes('RECENT_BEFORE_40K: agent-1 started scanning plugins.'));
+  assert(deepHistory.prompt.includes('SUBAGENT_SETTLED_TAIL'));
+  assert(deepHistory.prompt.endsWith('user: 继续'));
+  assert.equal(deepHistory.omittedChars > 0, true);
+});
+
+test('流式 thinking_delta 去重以及流事件/RPC 活动刷新空闲超时（静默仍触发 TIMEOUT）', async t => {
+  const scratch = mkdtempSync(join(tmpdir(), 'dsh-mcp-idle-'));
+  t.after(() => rmSync(scratch, { recursive: true, force: true }));
+
+  const slowStreamFile = join(scratch, 'wb-stream-sim.mjs');
+  writeFileSync(slowStreamFile, [
+    "const sleep = ms => new Promise(r => setTimeout(r, ms));",
+    "for (let i = 0; i < 5; i += 1) {",
+    "  await sleep(75);",
+    "  process.stdout.write(JSON.stringify({ type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'step-' + i } } }) + '\\n');",
+    "}",
+    "await sleep(75);",
+    "process.stdout.write(JSON.stringify({ type: 'stream_event', event: { type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: 'Done ' } } }) + '\\n');",
+    "await sleep(75);",
+    "process.stdout.write(JSON.stringify({ type: 'stream_event', event: { type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: 'answer' } } }) + '\\n');",
+    "process.stdout.write(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'thinking', thinking: 'step-0step-1step-2step-3step-4' }, { type: 'text', text: 'Done answer' }] } }) + '\\n');",
+    "process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'Done answer' }) + '\\n');"
+  ].join('\n'));
+
+  const bridge = createMcpBridge({
+    scratch,
+    turnTimeoutMs: 220,
+    cliDetect: () => ({ command: process.execPath, prefix: [slowStreamFile] })
+  });
+  t.after(() => bridge.dispose());
+
+  const chunks = [];
+  for await (const c of bridge.stream('workbuddy-cn', {
+    messages: [{ role: 'user', content: 'stream slowly' }],
+    tools: [{ name: 'noop' }]
+  })) {
+    chunks.push(c);
+  }
+  assert.equal(chunks.filter(c => c.type === 'reasoning-delta').map(c => c.text).join(''), 'step-0step-1step-2step-3step-4');
+  assert.equal(chunks.filter(c => c.type === 'text-delta').map(c => c.text).join(''), 'Done answer');
+  assert.equal(chunks.at(-1).type, 'finish');
+  assert.equal(chunks.at(-1).reason.kind, 'stop');
+
+  const silentFile = join(scratch, 'wb-silent-sim.mjs');
+  writeFileSync(silentFile, 'setInterval(() => {}, 1000);\n');
+  const silentBridge = createMcpBridge({
+    scratch,
+    turnTimeoutMs: 120,
+    cliDetect: () => ({ command: process.execPath, prefix: [silentFile] })
+  });
+  t.after(() => silentBridge.dispose());
+
+  const timeoutChunks = [];
+  for await (const c of silentBridge.stream('workbuddy-cn', {
+    messages: [{ role: 'user', content: 'hang silently' }],
+    tools: [{ name: 'noop' }]
+  })) {
+    timeoutChunks.push(c);
+  }
+  assert.equal(timeoutChunks.at(-1).type, 'finish');
+  assert.equal(timeoutChunks.at(-1).reason.kind, 'error');
+  assert.match(timeoutChunks.at(-1).reason.failure.message, /TIMEOUT/);
 });
