@@ -295,7 +295,11 @@ export function normalizeCliUsage(raw) {
 
 export function setupMcpWorkspace(platform, sessionDir, mcpUrl, tools = []) {
   mkdirSync(sessionDir, { recursive: true });
-  mkdirSync(join(sessionDir, '.git'), { recursive: true });
+  const gitDir = join(sessionDir, '.git');
+  mkdirSync(join(gitDir, 'refs', 'heads'), { recursive: true });
+  mkdirSync(join(gitDir, 'objects'), { recursive: true });
+  writeFileSync(join(gitDir, 'HEAD'), 'ref: refs/heads/main\n');
+  writeFileSync(join(gitDir, 'config'), '[core]\n\trepositoryformatversion = 0\n\tfilemode = false\n\tbare = false\n');
   if (platform === 'cursor') {
     const cursorDir = join(sessionDir, '.cursor');
     mkdirSync(cursorDir, { recursive: true });

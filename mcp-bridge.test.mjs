@@ -28,6 +28,10 @@ test('setupMcpWorkspace 与 buildMcpCliCommand 为 Cursor 和 Antigravity 生成
   ];
   setupMcpWorkspace('cursor', cursorDir, 'http://127.0.0.1:43210/mcp/tok1', tools);
   assert.equal(existsSync(join(cursorDir, '.git')), true);
+  assert.equal(existsSync(join(cursorDir, '.git', 'HEAD')), true);
+  assert.equal(existsSync(join(cursorDir, '.git', 'refs', 'heads')), true);
+  assert.equal(existsSync(join(cursorDir, '.git', 'objects')), true);
+  assert.equal(readFileSync(join(cursorDir, '.git', 'HEAD'), 'utf8'), 'ref: refs/heads/main\n');
   const cursorMcp = JSON.parse(readFileSync(join(cursorDir, '.cursor', 'mcp.json'), 'utf8'));
   assert.equal(cursorMcp.mcpServers.dsh.url, 'http://127.0.0.1:43210/mcp/tok1');
 
