@@ -282,8 +282,9 @@ export async function runProcess(spec,{cwd=join(ROOT,'scratch'),signal,timeoutMs
   const lines=createInterface({input:child.stdout});
   lines.on('line',line=>{
    if(parseError)return;
-   if(stdout.length+line.length>2*1024*1024){parseError=new Error('CLI output limit exceeded');stop();return;}
-   stdout+=line+'\n';let event;try{event=JSON.parse(line);}catch{return;}
+   if(line.length>16*1024*1024){parseError=new Error('CLI output limit exceeded');stop();return;}
+   if(stdout.length+line.length<=2*1024*1024)stdout+=line+'\n';
+   let event;try{event=JSON.parse(line);}catch{return;}
    try{onEvent(event);}catch(e){parseError=e;stop();}
   });
   child.stderr.on('data',b=>{stderr=(stderr+b.toString()).slice(-8192);});

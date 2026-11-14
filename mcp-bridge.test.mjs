@@ -655,3 +655,40 @@ test('流式 thinking_delta 去重以及流事件/RPC 活动刷新空闲超时�
   assert.equal(timeoutChunks.at(-1).reason.kind, 'error');
   assert.match(timeoutChunks.at(-1).reason.failure.message, /TIMEOUT/);
 });
+
+test('多步流式 JSONL 原始体积超过 2MB 但正文未超限时不会误触发 CLI output limit exceeded', async t => {
+  const scratch = mkdtempSync(join(tmpdir(), 'dsh-mcp-bigjson-'));
+  t.after(() => rmSync(scratch, { recursive: true, force: true }));
+
+  const bigJsonSimFile = join(scratch, 'wb-bigjson-sim.mjs');
+  writeFileSync(bigJsonSimFile, [
+    "const pad = 'p'.repeat(420);",
+    "let rawBytes = 0;",
+    "for (let i = 0; i < 6500; i += 1) {",
+    "  const line = JSON.stringify({ type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: pad } } }) + '\\n';",
+    "  rawBytes += line.length;",
+    "  process.stdout.write(line);",
+    "}",
+    "if (rawBytes <= 2.5 * 1024 * 1024) throw new Error('Expected > 2.5MB raw stdout');",
+    "process.stdout.write(JSON.stringify({ type: 'stream_event', event: { type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: 'Large stream completed' } } }) + '\\n');",
+    "process.stdout.write(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Large stream completed' }] } }) + '\\n');",
+    "process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'Large stream completed' }) + '\\n');"
+  ].join('\n'));
+
+  const bridge = createMcpBridge({
+    scratch,
+    cliDetect: () => ({ command: process.execPath, prefix: [bigJsonSimFile] })
+  });
+  t.after(() => bridge.dispose());
+
+  const chunks = [];
+  for await (const c of bridge.stream('workbuddy-cn', {
+    messages: [{ role: 'user', content: 'run many streamed steps' }],
+    tools: [{ name: 'noop' }]
+  })) {
+    chunks.push(c);
+  }
+  assert.equal(chunks.filter(c => c.type === 'text-delta').map(c => c.text).join(''), 'Large stream completed');
+  assert.equal(chunks.at(-1).type, 'finish');
+  assert.equal(chunks.at(-1).reason.kind, 'stop');
+});

@@ -10,7 +10,8 @@ const DEFAULT_BATCH_MS = 50;
 const MAX_BATCH_MS = 200;
 const DEFAULT_SUSPEND_TTL_MS = 5 * 60_000;
 const DEFAULT_TURN_TIMEOUT_MS = 180_000;
-const MAX_OUTPUT_CHARS = 2 * 1024 * 1024;
+const MAX_LINE_CHARS = 32 * 1024 * 1024;
+const MAX_TURN_OUTPUT_CHARS = 8 * 1024 * 1024;
 
 export function normalizeInputSchema(parameters) {
   const base = parameters && typeof parameters === 'object' && !Array.isArray(parameters)
@@ -656,7 +657,7 @@ export function createMcpBridge({
       let body = '';
       req.on('data', chunk => {
         body += chunk;
-        if (body.length > MAX_OUTPUT_CHARS) req.destroy();
+        if (body.length > MAX_LINE_CHARS) req.destroy();
       });
       req.on('end', () => {
         if (!body.trim()) {
@@ -821,12 +822,10 @@ export function createMcpBridge({
         stdio: ['pipe', 'pipe', 'pipe']
       });
       session.child = child;
-      let stdoutChars = 0;
       const lines = createInterface({ input: child.stdout });
       session.lines = lines;
       lines.on('line', line => {
-        stdoutChars += line.length + 1;
-        if (stdoutChars > MAX_OUTPUT_CHARS) {
+        if (line.length > MAX_LINE_CHARS) {
           session.processError = new Error('CLI output limit exceeded');
           session.destroy(session.processError);
           return;
@@ -922,8 +921,14 @@ export function createMcpBridge({
         });
         turn.openBlock = null;
       },
+      exceedsOutputLimit(text) {
+        if (turn.turnReasoning.length + turn.turnText.length + text.length <= MAX_TURN_OUTPUT_CHARS) return false;
+        session.processError = new Error('CLI output limit exceeded');
+        session.destroy(session.processError);
+        return true;
+      },
       appendReasoning(text) {
-        if (!text || turn.done) return;
+        if (!text || turn.done || turn.exceedsOutputLimit(text)) return;
         if (turn.openBlock?.type !== 'reasoning') {
           turn.closeOpenBlock();
           turn.openBlock = { type: 'reasoning', index: turn.nextIndex++, text: '' };
@@ -936,7 +941,7 @@ export function createMcpBridge({
         turn.enqueue({ type: 'reasoning-delta', index: turn.openBlock.index, text });
       },
       appendText(text) {
-        if (!text || turn.done) return;
+        if (!text || turn.done || turn.exceedsOutputLimit(text)) return;
         if (turn.openBlock?.type !== 'text') {
           turn.closeOpenBlock();
           turn.openBlock = { type: 'text', index: turn.nextIndex++, text: '' };
