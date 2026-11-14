@@ -51,6 +51,8 @@ test('Cursor 默认使用精简清单；显式空列表仍允许用户选择全�
   const models = Array.from({ length: 270 }, (_, i) => ({ provider: 'cursor', id: 'model-' + i, name: 'Model ' + i }));
   assert.equal(selectModels(models, ['removed']).models.length, 8);
   assert.equal(selectModels(models, []).models.length, 270);
+  assert.equal(selectModels(models, ['__none__']).models.length, 0);
+  assert.deepEqual(projectSelection(models, ['__none__']), ['__none__']);
 });
 test('目录更名后筛选不会清空选择器；仍有效的用户筛选保持不变', () => {
   const all = rows('codex');

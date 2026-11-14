@@ -22,11 +22,21 @@
 | 聊天模型选择器 | 输入区菜单在「模型」上方提供「平台」。切换平台后只展示该平台的模型，选定模型时更新当前会话。积分倍率与推理等级沿用会话目录。 |
 | 模型选择 | 插件不再配置默认模型。会话使用当次选中的模型，未指定模型的测活和子代理由对应平台选择。旧的 `platforms.*.model` 字段读取时忽略，下次保存平台设置时移除。 |
 |Cursor 双额度池 | 复用本机 Cursor CLI 登录态读取 Cursor Models 和 Other Models 的剩余比例及重置时间。总览分两行显示剩余比例，详情还显示重置时间，窄屏也可见。宿主返回旧版套餐信息时，总览提示完整重启 Harness；登录失效时需恢复 Cursor CLI 登录。该服务使用 Cursor 客户端的内部接口，接口变更及其他套餐仍待验证。 |
+| WorkBuddy CN 原生工具 | `workbuddy-cn` 改用原生 chat-completions 适配器，支持多轮工具调用、并行调用、推理块和 usage，`hy4free` 实测通过。DSH 主会话的系统提示会被腾讯网关以 11128（未授权渠道）拒绝，hub 不做规避，只给出明确报错。详见 [docs/native-tools-integration.md](docs/native-tools-integration.md)。 |
 | Windows CLI 闪窗 | 后台 CLI 使用隐藏窗口启动。本次减少额度轮询引起的重复启动。只读额度查询中未检测到新终端窗口，真实模型调用时的闪窗仍待复测。 |
 
 ## 待办事项 (TODO)
 
 - [ ] **WorkBuddy 企业账号积分与用量分流**：当凭据包含非空 `enterpriseId` 时，支持调用企业账单接口 `POST /v2/billing/meter/get-enterprise-user-usage`（解析 `credit`、`limitNum`、`remainDay`，计算 `remaining = Math.max(0, limitNum - credit)`），与个人资源包接口 `get-user-resource` 分流展示。
+
+## WorkBuddy CN 原生工具通道（2026-11-14）
+
+- `workbuddy-cn` 模型不再拍平成一条文本，而是把系统提示、历史、工具调用、工具结果和工具定义转换成 chat-completions 请求，并把流式 `reasoning_content`、`content`、`tool_calls` 转成宿主块。
+- 按实测适配网关怪癖：空值为空串；后续工具分片不带 `id`，只能按 `index` 归并；首条必须是 system 消息；`tool_choice` 只接受字符串。
+- 模型目录读取每个模型的推理档位，`hy4free` 只提供「高」。
+- 失败映射为宿主错误码，11128 渠道拒绝附中文说明且不重试。流式请求在 180 秒无数据后中止。
+- 已知限制：腾讯网关识别 DSH 主会话系统提示后返回 11128，主会话暂不可用；图片暂按文字占位发送。
+- 四个平台接入原生工具的核实结论、宿主流式协议和实测报文，见 [docs/native-tools-integration.md](docs/native-tools-integration.md)。
 
 ## 底层登录态与账号信息优化
 
@@ -185,6 +195,7 @@ Harness 的两个凭据命名空间不同：
 | `index.js` | Host 服务、模型 adapter、子代理、管理工具、HTTP 入口 |
 | `p0.mjs` | API 账号、模型目录、DeepSeek 余额、本地 OpenAI 兼容网关 |
 | `workbuddy.mjs` | WorkBuddy CN 凭据获取/刷新、登录流程、模型、积分和聊天 |
+| `workbuddy-chat.mjs` | WorkBuddy CN 原生主会话 adapter：DSH 消息/工具 ↔ chat-completions，流式工具调用与推理 |
 | `runtime.mjs` | CLI 探测、无 shell 子进程、事件解析、Codex app-server 只读查询 |
 | `cn-client.mjs` | 未注入 WorkBuddy 客户端时的最小 CN API 回退与积分解析 |
 | `client.js` | 左侧「模型管理」入口、独立主面板、账号/渠道/模型/网关设置及本地化资源 |
@@ -205,9 +216,9 @@ HTTP 管理入口：`POST /plugins/dsh-ai-hub/api`，JSON body，要求 `x-dsh-a
 
 网关入口：`/plugins/dsh-ai-hub/gateway/v1/models` 和 `/plugins/dsh-ai-hub/gateway/v1/chat/completions`，使用自己的 Bearer Key。模型名称是 `deepseek/<model>` 或 `custom/<model>`，未带平台前缀时默认为 DeepSeek；支持 JSON 与流式响应。自定义平台没有统一余额 API，不虚构余额。
 
-Cursor / Antigravity 模型 adapter 仅支持文本，不转交 DSH 工具 schema；工具任务使用子代理。CLI 文本输入预算默认 24,000 字符，过长时保留系统摘录和最近消息并插入省略标记。CLI 子代理执行它们各自的工具循环。
+Cursor / Antigravity 模型 adapter 仅支持文本，不转交 DSH 工具 schema；工具任务使用子代理。WorkBuddy CN 模型 adapter 转交 DSH 工具并返回结构化工具调用（`workbuddy-chat.mjs`），其子代理仍是纯文本。CLI 文本输入预算默认 24,000 字符，过长时保留系统摘录和最近消息并插入省略标记。CLI 子代理执行它们各自的工具循环。
 
-WorkBuddy 当前源码会读取 DSH 授权记录，并可能发现本地 vault / 桌面授权文件或刷新 token，也实现了 Web 登录流程；这与早期版本“完全不读取凭据、未实现鉴权”的说明不同。本次未改动这些行为，也未进行真实登录或凭据读取验证。
+WorkBuddy 当前源码会读取 DSH 授权记录，并可能发现本地 vault / 桌面授权文件或刷新 token，也实现了 Web 登录流程；这与早期版本“完全不读取凭据、未实现鉴权”的说明不同。2026-11-14 用免费模型 `hy4free` 做过真实请求验证：探测时禁止令牌刷新，凭据只放在内存，未改动凭据存储，也未打印凭据。
 
 ## 验证
 
@@ -217,9 +228,10 @@ WorkBuddy 当前源码会读取 DSH 授权记录，并可能发现本地 vault /
 node validate.mjs
 node selftest.mjs
 node --test p0.test.mjs
+node --test workbuddy-chat.test.mjs
 ```
 
-这三项检查不调用付费模型、不登录第三方、不读取真实凭据。P0 测试使用内存凭据与回环 HTTP 服务。静态检查和原有自测在 `evidence/` 写入脱敏结果；测试临时目录在 `scratch/` 内创建并清理。
+这些检查不调用付费模型、不登录第三方、不读取真实凭据。P0 测试使用内存凭据与回环 HTTP 服务。静态检查和原有自测在 `evidence/` 写入脱敏结果；测试临时目录在 `scratch/` 内创建并清理。
 
 `node build.mjs` 在修改 locale 或平台源图后重建 Client 字典与内置图标。`node verify.mjs all` 会调用真实平台并可能消耗额度，不属于默认自测；不得把历史真实调用结果当成当前连通性证明。
 

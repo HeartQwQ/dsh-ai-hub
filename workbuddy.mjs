@@ -219,6 +219,15 @@ function maskAccount(account) {
     uidTail: account.uid ? account.uid.slice(-6) : ''
   };
 }
+const EFFORT_NAMES = { minimal: '最小', low: '低', medium: '中', high: '高', xhigh: '极高', max: '最大' };
+function catalogReasoning(raw) {
+  const ids = Array.isArray(raw?.supportedEfforts) ? raw.supportedEfforts.filter(id => typeof id === 'string' && id) : [];
+  if (!ids.length) return {};
+  return { reasoning: {
+    efforts: ids.map(id => ({ id, name: EFFORT_NAMES[id] ?? id })),
+    ...(ids.includes(raw.defaultEffort) ? { defaultEffort: raw.defaultEffort } : {})
+  } };
+}
 function headersFor(credential, json = false) {
   return {
     Authorization: `Bearer ${credential.accessToken}`,
@@ -447,7 +456,8 @@ export function createWorkbuddy({
       credits: typeof model.credits === 'string' || typeof model.credits === 'number' ? model.credits : undefined,
       contextWindow: typeof model.maxInputTokens === 'number' ? model.maxInputTokens : undefined,
       maxOutput: typeof model.maxOutputTokens === 'number' ? model.maxOutputTokens : undefined,
-      tools: model.supportsToolCall === true
+      tools: model.supportsToolCall === true,
+      ...catalogReasoning(model.reasoning)
     }));
     return { models, account: maskAccount(credential), source: credential.source };
   };
@@ -583,6 +593,22 @@ export function createWorkbuddy({
     onText?.(text);
     return { text };
   };
+  /** POSTs a prepared chat-completions body; 401 retries once with a refreshed token. */
+  const openChat = async (body, { signal } = {}) => {
+    const send = credential => fetch(`${CN_CHAT}/v2/chat/completions`, {
+      method: 'POST',
+      headers: { ...headersFor(credential, true), Accept: 'text/event-stream' },
+      body: typeof body === 'string' ? body : JSON.stringify(body),
+      signal
+    });
+    let response = await send(await requireCredential());
+    if (response.status === 401) {
+      await response.body?.cancel().catch(() => {});
+      const refreshed = await loadCredential(true);
+      if (refreshed) response = await send(refreshed);
+    }
+    return response;
+  };
   const startLogin = async () => {
     const response = await fetch(`${CN_BILLING}${API_PREFIX}/auth/state?platform=workbuddy`, {
       method: 'POST',
@@ -658,5 +684,6 @@ export function createWorkbuddy({
       return { loggedIn: false, account: null, models: [], credits: null, error: String(error?.message || error) };
     }
   };
-  return { snapshot, startLogin, pollLogin, listModels, credits, chat, checkinStatus, claimCheckin };
+  const accessToken = async () => (await requireCredential()).accessToken;
+  return { snapshot, startLogin, pollLogin, listModels, credits, chat, openChat, checkinStatus, claimCheckin, accessToken };
 }

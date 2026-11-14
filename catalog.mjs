@@ -79,6 +79,7 @@ export function collapseModels(models) {
 }
 export function projectSelection(models, ids) {
   if (!Array.isArray(ids) || !ids.length) return [];
+  if (ids.length === 1 && ids[0] === '__none__') return ['__none__'];
   const representatives = new Map(collapseModels(models).map(row => [row.family || row.id, row.id]));
   return [...new Set(ids.map(id => {
     const model = models.find(row => row.id === id);
@@ -111,6 +112,7 @@ export function parseCliModels(output, provider) {
 
 export function selectModels(models, ids) {
   if (!Array.isArray(ids) || !ids.length) return { models, missing: [], fallback: false };
+  if (ids.length === 1 && ids[0] === '__none__') return { models: [], missing: [], fallback: false };
   const available = new Set(models.map(model => model.id));
   const missing = ids.filter(id => !available.has(id));
   const selected = models.filter(model => ids.includes(model.id));

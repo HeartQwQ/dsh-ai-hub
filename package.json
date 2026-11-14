@@ -6,7 +6,7 @@
   "description": "Unified AI providers, subagents, quota and project office for DSH.",
   "license": "MIT",
   "scripts": {
-    "test": "node selftest.mjs && node --test p0.test.mjs catalog.test.mjs client.test.mjs login-actions.test.mjs native-config.test.mjs connection.test.mjs usage-store.test.mjs usage-host.test.mjs",
+    "test": "node selftest.mjs && node --test p0.test.mjs catalog.test.mjs client.test.mjs login-actions.test.mjs native-config.test.mjs connection.test.mjs workbuddy-chat.test.mjs usage-store.test.mjs usage-host.test.mjs mcp-bridge.test.mjs",
     "check": "node validate.mjs"
   },
   "exports": {
@@ -26,6 +26,10 @@
     "cn-client.mjs",
     "p0.mjs",
     "workbuddy.mjs",
+    "workbuddy-chat.mjs",
+    "workbuddy-chat.test.mjs",
+    "mcp-bridge.mjs",
+    "mcp-bridge.test.mjs",
     "client.js",
     "verify.mjs",
     "selftest.mjs",

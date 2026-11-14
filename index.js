@@ -2,6 +2,8 @@ import { cnModels, cnCall, cnCredits } from './cn-client.mjs';
 import { normalizeModels, parseCliModels, selectModels, createProxyAdapter, recommendedModels, withVariantReasoning, collapseModels, projectSelection, resolveVariant } from './catalog.mjs';
 import { createP0 } from './p0.mjs';
 import { createWorkbuddy } from './workbuddy.mjs';
+import { createWorkbuddyAdapter } from './workbuddy-chat.mjs';
+import { createMcpBridge, extractPendingToolResults, formatMcpPrompt } from './mcp-bridge.mjs';
 import { createLoginActions } from './login-actions.mjs';
 import { nativeProviderSnapshot } from './native-config.mjs';
 import { createUsageStore, createFileBackend, fromGatewayRecord, toGatewayRecord } from './usage-store.mjs';
@@ -44,7 +46,6 @@ export function normalizeSettings(raw={}){
  return out;
 }
 export const CLI_INPUT_BUDGET=24000;
-const TEXT_ONLY='Text conversation only. Do not access files, commands or tools.';
 function clipMiddle(text,limit){
  if(limit<=0)return '';
  if(text.length<=limit)return text;
@@ -54,7 +55,9 @@ function clipMiddle(text,limit){
  return text.slice(0,head)+marker+text.slice(-tail);
 }
 export function flattenWithMeta(options,budget=CLI_INPUT_BUDGET){
- // CLI models never emit DSH tool calls; tool schemas are deliberately not forwarded.
+ // CLI models never emit DSH tool calls; DSH tool schemas are deliberately not forwarded.
+ // The CLI backend still ships its own file/shell tools, so no text-only directive is
+ // prepended: an earlier "text conversation only" line suppressed those tools outright.
  const blocks=c=>typeof c==='string'?c:Array.isArray(c)?c.map(b=>b.type==='text'?b.text:`[${b.type} omitted]`).join('\n'):'';
  const system=blocks(options.system??options.systemPrompt??'').trim();
  const turns=(options.messages??[]).map(m=>`${m.role}: ${blocks(m.content)}`).filter(text=>text.length>0);
@@ -62,7 +65,7 @@ export function flattenWithMeta(options,budget=CLI_INPUT_BUDGET){
  // Some hosts build a very large system prompt (tool catalogue, agent guide). The
  // CLI transports cap a single prompt at 26000 characters, so keep a bounded
  // system excerpt plus the newest turns and drop older history explicitly.
- let remaining=Math.max(0,budget-TEXT_ONLY.length-4);
+ let remaining=Math.max(0,budget-2);
  const systemBudget=Math.min(6000,Math.floor(remaining*0.4));
  const systemText=system?clipMiddle(system,systemBudget):'';
  remaining=Math.max(0,remaining-systemText.length-2);
@@ -83,7 +86,7 @@ export function flattenWithMeta(options,budget=CLI_INPUT_BUDGET){
   while(kept.length>1&&remaining<note.length+2){remaining+=kept.shift().length+2;}
   if(remaining>=note.length+2){kept.unshift(note);remaining-=note.length+2;}
  }
- const prompt=[TEXT_ONLY,...(systemText?[systemText]:[]),...kept].join('\n\n');
+ const prompt=[...(systemText?[systemText]:[]),...kept].join('\n\n');
  const output=prompt.length>budget?clipMiddle(prompt,budget):prompt;
  return {prompt:output,inputChars:output.length,inputBudget:budget,systemChars:systemText.length,historyChars,omittedChars};
 }
@@ -108,15 +111,17 @@ export function meterStream(record,platform){
   try{
    for await(const event of await source){
     if(event?.type==='text-delta'&&typeof event.text==='string'){if(firstText===null)firstText=Date.now();output+=event.text;}
+    else if(event?.type==='tool-call-delta'&&typeof event.argumentsDelta==='string'){if(firstText===null)firstText=Date.now();output+=event.argumentsDelta;}
     else if(event?.type==='usage')usage=event.usage;
-    else if(event?.type==='finish')status=event.reason?.kind==='stop'?'ok':event.reason?.kind==='aborted'?'aborted':'error';
+    else if(event?.type==='finish')status=event.reason?.kind==='stop'||event.reason?.kind==='tool-calls'?'ok':event.reason?.kind==='aborted'?'aborted':'error';
     yield event;
    }
    completed=true;
   }catch(error){status=options.signal?.aborted?'aborted':'error';throw error;}
   finally{
    const tokens=hostUsageTokens(usage);
-   try{record({platform,providerId:platform,model:String(options.model?.id??options.model??''),effort:options.reasoningEffort,channel:'chat',source:'adapter',status:status??(completed?'ok':'aborted'),latencyMs:Date.now()-started,ttftMs:firstText===null?undefined:firstText-started,inputChars:system.length+history.length,systemChars:system.length,historyChars:history.length,outputChars:output.length,...(tokens??{tokenSource:'estimated',inputText:system+history,outputText:output})});}catch{}
+   const meta=options.inputMeta;
+   try{record({platform,providerId:platform,model:String(options.model?.id??options.model??''),effort:options.reasoningEffort,channel:'chat',source:'adapter',status:status??(completed?'ok':'aborted'),latencyMs:Date.now()-started,ttftMs:firstText===null?undefined:firstText-started,inputChars:meta?.inputChars??(system.length+history.length),inputBudget:meta?.inputBudget,omittedChars:meta?.omittedChars??0,systemChars:meta?.systemChars??system.length,historyChars:meta?.historyChars??history.length,outputChars:output.length,...(tokens??{tokenSource:'estimated',inputText:meta?.prompt??(system+history),outputText:output})});}catch{}
   }
  })();
 }
@@ -172,7 +177,7 @@ export function usageFilePath(env=process.env,ctx){
  }catch{}
  return join(env.DSH_HOME||join(homedir(),'.dsh'),'data','dsh-ai-hub','usage.json');
 }
-export function createHub({config={},save,workspaces,scratch,catalogUpstream,creditsWorkbuddy,callWorkbuddy,loadModels,usage,processRunner=runProcess,cliDetect=detect,cliCaller=cliCall,loadCodexModels=codexModels}={}){
+export function createHub({config={},save,workspaces,scratch,catalogUpstream,creditsWorkbuddy,callWorkbuddy,workbuddyAuth,loadModels,usage,processRunner=runProcess,cliDetect=detect,cliCaller=cliCall,loadCodexModels=codexModels,mcpSpawn}={}){
  let settings=normalizeSettings(config.platforms),disposed=false,settingsQueue=Promise.resolve();
  const lifetime=new AbortController();
  const settingsListeners=new Set();
@@ -180,6 +185,7 @@ export function createHub({config={},save,workspaces,scratch,catalogUpstream,cre
  const valid=p=>{if(!PLATFORMS.includes(p))throw new Error('Unknown platform / 未知平台');return p;};
  const enabled=p=>{valid(p);if(disposed)throw new Error('Hub disposed');if(!settings[p].enabled)throw new Error('DISABLED / 平台已禁用');};
  const recordUsage=event=>{try{usage?.record(event);}catch{}};
+ const mcpBridge=createMcpBridge({cliDetect,...(mcpSpawn?{spawnProcess:mcpSpawn}:{}),...(scratch?{scratch}:{}),resolveModelId:async(p,m,effort)=>m&&(p==='cursor'||p==='antigravity')?resolveVariant(await catalog(p),m,effort):m,resolveEnv:async p=>p==='workbuddy-cn'&&workbuddyAuth?{CODEBUDDY_AUTH_TOKEN:await workbuddyAuth()}:undefined,onState:(p,next)=>states.set(p,{...states.get(p),...next})});
  async function tracked(p,fn){enabled(p);const start=Date.now();states.set(p,{...states.get(p),state:'testing'});try{const result=await fn();states.set(p,{state:'connected',checkedAt:new Date().toISOString(),latencyMs:Date.now()-start,lastError:null});return result;}catch(e){states.set(p,{state:'error',checkedAt:new Date().toISOString(),latencyMs:Date.now()-start,lastError:failure(e)});throw e;}}
  async function catalog(p,refresh=false){valid(p);if(!settings[p].enabled)return [];const cached=catalogs.get(p);if(!refresh&&cached&&(cached.error?Date.now()-(cached.attemptedAt??0)<QUOTA_RETRY:Date.now()-cached.at<600000))return cached.models;
   // DSH resolves every model of a provider concurrently. Share one CLI catalog load
@@ -277,8 +283,25 @@ export function createHub({config={},save,workspaces,scratch,catalogUpstream,cre
   settings:()=>clone(settings),
   updateSettings(patch){const operation=async()=>{if(!patch||typeof patch!=='object'||Array.isArray(patch))throw new Error('Invalid settings');for(const [p,v]of Object.entries(patch)){valid(p);if(!v||typeof v!=='object'||Array.isArray(v))throw new Error('Invalid platform settings');for(const k of Object.keys(v))if(!['enabled','visibleModels',...(p==='workbuddy-cn'?['region','showCredits']:[])].includes(k))throw new Error(`Unknown setting: ${k}`);if(v.region!==undefined&&v.region!=='cn')throw new Error('CN only');if(v.showCredits!==undefined&&typeof v.showCredits!=='boolean')throw new Error('Invalid showCredits');if(v.enabled!==undefined&&typeof v.enabled!=='boolean')throw new Error('Invalid enabled');if(v.visibleModels!==undefined&&(!Array.isArray(v.visibleModels)||v.visibleModels.some(x=>typeof x!=='string'||x.length>160||x.startsWith('-'))))throw new Error('Invalid visibleModels');}
    const candidate=normalizeSettings(Object.fromEntries(PLATFORMS.map(p=>[p,{...settings[p],...patch[p]}])));if(!save)throw new Error('Config editor unavailable / 无法持久化设置');await save(candidate);settings=candidate;for(const listener of settingsListeners) {try{listener();}catch{}}return hub.settings();};const result=settingsQueue.then(operation);settingsQueue=result.catch(()=>{});return result;},
-  status(p){valid(p);let available=false;try{detect(p);available=true;}catch{}return {platform:p,enabled:settings[p].enabled,available,...(states.get(p)??{}),state:settings[p].enabled?(states.get(p)?.state??'unknown'):'disabled',modelChannel:'text',subagentChannel:p==='workbuddy-cn'?'text':p==='codex'?'builtin':'cli'};},
+  status(p){valid(p);let available=false;try{detect(p);available=true;}catch{}return {platform:p,enabled:settings[p].enabled,available,...(states.get(p)??{}),state:settings[p].enabled?(states.get(p)?.state??'unknown'):'disabled',modelChannel:['workbuddy-cn','cursor','antigravity'].includes(p)?'tools':'text',subagentChannel:p==='workbuddy-cn'?'text':p==='codex'?'builtin':'cli'};},
   quota,catalog,catalogInfo,visibleModels,call,
+  hasMcpSession(messages){return mcpBridge.hasSuspendedSessionFor(messages);},
+  async *mcpStream(p,options={}){
+   enabled(p);
+   const requested=typeof options.model==='string'?options.model:options.model?.id;
+   const resuming=mcpBridge.hasSuspendedSessionFor(options.messages);
+   const resolved=requested&&!resuming&&(p==='cursor'||p==='antigravity')?resolveVariant(await catalog(p),requested,options.reasoningEffort):requested;
+   let flat;
+   if(resuming){
+    const pending=extractPendingToolResults(options.messages);
+    const parts=pending?[...[...pending.resultsById.values()].map(r=>r.content),...(pending.trailingText?[pending.trailingText]:[])]:[];
+    const text=parts.join('\n');
+    flat={prompt:text,inputChars:text.length,systemChars:0,historyChars:text.length,omittedChars:0};
+   }else{
+    flat=formatMcpPrompt(options);
+   }
+   yield* meterStream(recordUsage,p)(mcpBridge.stream(p,{...options,model:resolved??requested}),{...options,model:resolved??requested??'平台自动选择',inputMeta:flat});
+  },
   onSettingsChanged(listener){settingsListeners.add(listener);return ()=>settingsListeners.delete(listener);},
   async test(p,channel='model',options={}){valid(p);if(!['model','subagent'].includes(channel))throw new Error('Invalid channel');const at=new Date().toISOString();try{const r=await call(p,'Reply with exactly OK. Do not use tools or access files.',{channel,usageChannel:'test',...options});return {ok:r.text.trim()==='OK',platform:p,channel,answer:safe(r.text),at,...hub.status(p),warning:r.warning};}catch(e){states.set(p,{...states.get(p),state:'error',lastError:failure(e)});return {ok:false,platform:p,channel,at,error:failure(e),...hub.status(p)};}},
   async projects(){if(!workspaces) return {projects:[],error:'DSH workspace service unavailable / 无法读取项目列表'};return workspaces();},
@@ -287,7 +310,7 @@ export function createHub({config={},save,workspaces,scratch,catalogUpstream,cre
   usageSnapshot(options={}){return (usage??createUsageStore()).snapshot(options);},
   usageReset(platform){return (usage??createUsageStore()).reset(platform);},
   usageFlush(){return usage?usage.flush():Promise.resolve();},
-  dispose(){disposed=true;settingsListeners.clear();lifetime.abort();for(const c of active)c.abort();usage?.dispose?.();}
+  dispose(){disposed=true;settingsListeners.clear();lifetime.abort();for(const c of active)c.abort();mcpBridge.dispose();usage?.dispose?.();}
  };return hub;
 }
 export function createAdapter(hub,platform){
@@ -296,7 +319,14 @@ export function createAdapter(hub,platform){
   try{info=(await hub.catalog(platform)).find(model=>model.id===id)??null;}catch{}
   return {provider,id,name:info?.name??id,context:{contextWindow:info?.contextWindow??200000},defaultMaxTokens:info?.maxOutput??32768,inputModalities:info?.inputModalities??['text'],...(info?.reasoning?{reasoning:info.reasoning}:{})};
  };
- async function* stream(options){const queue=[];let wake,done=false,error,answer='';const controller=new AbortController();const upstream=options.signal;const abort=()=>controller.abort();upstream?.addEventListener('abort',abort,{once:true});if(upstream?.aborted)controller.abort();const emit=t=>{if(!answer)queue.push({type:'block-start',index:0,blockType:'text'});answer+=t;queue.push({type:'text-delta',index:0,text:t});wake?.();};
+ async function* stream(options){
+  const useMcp=(platform==='cursor'||platform==='antigravity')&&typeof hub.mcpStream==='function'&&((Array.isArray(options?.tools)&&options.tools.length>0)||Boolean(hub.hasMcpSession?.(options?.messages)));
+  if(useMcp){
+   try{yield* hub.mcpStream(platform,options);}
+   catch(e){yield {type:'finish',reason:options?.signal?.aborted?{kind:'aborted'}:{kind:'error',failure:failure(e)}};}
+   return;
+  }
+  const queue=[];let wake,done=false,error,answer='';const controller=new AbortController();const upstream=options.signal;const abort=()=>controller.abort();upstream?.addEventListener('abort',abort,{once:true});if(upstream?.aborted)controller.abort();const emit=t=>{if(!answer)queue.push({type:'block-start',index:0,blockType:'text'});answer+=t;queue.push({type:'text-delta',index:0,text:t});wake?.();};
   const flat=flattenWithMeta(options);
   const task=Promise.resolve().then(()=>hub.call(platform,flat.prompt,{model:typeof options.model==='string'?options.model:options.model?.id,signal:controller.signal,onText:emit,reasoningEffort:options.reasoningEffort,inputMeta:flat})).catch(e=>{error=e;}).finally(()=>{done=true;wake?.();});
   try{while(!done||queue.length){if(queue.length){yield queue.shift();continue;}await new Promise(r=>{wake=r;});wake=null;}if(answer)yield {type:'block-end',index:0,block:{type:'text',text:answer}};yield {type:'finish',reason:controller.signal.aborted?{kind:'aborted'}:error?{kind:'error',failure:failure(error)}:{kind:'stop'}};}finally{controller.abort();upstream?.removeEventListener('abort',abort);await task;}
@@ -338,6 +368,7 @@ export function apply(ctx,config={}){
   catalogUpstream:async()=> (await workbuddy.listModels()).models,
   ...(codexUpstream?{loadModels:async(p,signal)=>p==='codex'?ctx.llm.listModels(codexUpstream):p==='workbuddy-cn'?(await workbuddy.listModels()).models:await readCliCatalog(p,signal)}:{}),
   callWorkbuddy:(prompt,model,options)=>workbuddy.chat(prompt,model,options),
+  workbuddyAuth:()=>workbuddy.accessToken(),
   creditsWorkbuddy:async()=>{try{const value=await workbuddy.credits();return {remaining:value.remaining,multiplier:null};}catch{return {remaining:null,multiplier:null};}},
   workspaces:async()=>{const service=ctx.get('workspaceRegistry');if(!service||typeof service.list!=='function')return {projects:[],error:'DSH workspaceRegistry service unavailable'};const rows=await service.list();const list=Array.isArray(rows)?rows:rows?.workspaces;if(!Array.isArray(list))return {projects:[],error:'Unsupported workspace list response'};return {projects:list.map(w=>({id:String(w.id??w.path),name:String(w.title??w.path??w.id),path:w.path??null,sessionCount:w.sessionIds?.length??0}))};}});
  ctx.effect(()=>{const release=ctx.provide('aiHub',hub);return ()=>{hub.dispose();return release();};});
@@ -346,7 +377,7 @@ export function apply(ctx,config={}){
  for(const p of ['cursor','antigravity','workbuddy-cn']){
   // Preserve existing owners: registering over them makes Harness reject activation.
   if(!registered.has(p)) {
-   register(p,createAdapter(hub,p));
+   register(p,p==='workbuddy-cn'?createWorkbuddyAdapter({hub,client:workbuddy,provider:p,name:NAMES[p],meter:meterStream(input=>usageStore.record(input),p)}):createAdapter(hub,p));
    if(typeof ctx.llm.registerConfigurableProviders==='function')ctx.effect(()=>ctx.llm.registerConfigurableProviders([{provider:p,displayName:NAMES[p],settingsNs:'dsh-ai-hub',settingsPath:[],declared:false}]));
   }
   if(hub.settings()[p].enabled)ctx.effect(()=>ctx.subagents.registerProvider(createSubagent(hub,p)));

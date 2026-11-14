@@ -912,7 +912,7 @@ window.__ModuleLoader__.load({
     const customBaseUrl = providers.find(provider => provider.id === 'custom')?.baseUrl || '';
 
     const goto = next => setView(next);
-    const choosePlatform=id=>{setSelectedPlatform(id);setBusinessTab('account');setModelOpen('');setLocalModelFilter('');if(bodyRef.current)bodyRef.current.scrollTop=0;};
+    const choosePlatform=id=>{setSelectedPlatform(id);setModelOpen('');setLocalModelFilter('');if(bodyRef.current)bodyRef.current.scrollTop=0;};
     const focusPlatform = row => {
       choosePlatform(row.id === 'deepseek-account' ? 'deepseek' : row.id);
       setView('platforms');
@@ -958,15 +958,34 @@ window.__ModuleLoader__.load({
       const saved = await call('p0SetVisibleModels', { providerId, ids });
       setP0(current => ({ ...current, visibleModels: { ...(current?.visibleModels || {}), [providerId]: Array.isArray(saved) ? saved : ids } }));
     });
-    const toggleModel = (providerId, modelId, checked) => {
-      const all = (catalogs[providerId]?.models || []).map(model => model.id);
-      const current = p0?.visibleModels?.[providerId] || [];
-      const matched = current.filter(id => all.includes(id));
-      const effective = matched.length ? matched : all;
+    const NONE_MODELS_SENTINEL = '__none__';
+    const resolveVisibleSelection = (models, visible, fallbackIds) => {
+      const list = Array.isArray(models) ? models : [];
+      const allIds = list.map(model => model.id);
+      const byVariant = new Map();
+      for (const model of list) {
+        byVariant.set(model.id, model.id);
+        for (const variantId of Object.values(model.effortModels || {})) byVariant.set(variantId, model.id);
+      }
+      const current = Array.isArray(visible) ? visible : [];
+      const noneSelected = current.length === 1 && current[0] === NONE_MODELS_SENTINEL;
+      const matched = noneSelected ? [] : [...new Set(current.map(id => byVariant.get(id)).filter(Boolean))];
+      const stale = !noneSelected && current.length > 0 && matched.length === 0 && allIds.length > 0;
+      const fallback = Array.isArray(fallbackIds) && fallbackIds.length
+        ? [...new Set(fallbackIds.map(id => byVariant.get(id) || id).filter(id => allIds.includes(id)))]
+        : allIds;
+      const effective = noneSelected ? [] : (matched.length ? matched : (stale && fallback.length ? fallback : allIds));
+      return { noneSelected, matched, stale, effective };
+    };
+    const toggleVisibleSelection = (models, current, modelId, checked, fallbackIds) => {
+      const list = Array.isArray(models) ? models : [];
+      const allIds = list.map(model => model.id);
+      const { effective } = resolveVisibleSelection(list, current, fallbackIds);
       const next = checked ? [...new Set([...effective, modelId])] : effective.filter(id => id !== modelId);
-      // 后端把空数组解释为「全部显示」，所以不允许取消最后一个可见模型
-      if (!next.length) return;
-      setVisible(providerId, next);
+      return !next.length ? [NONE_MODELS_SENTINEL] : (next.length === allIds.length ? [] : next);
+    };
+    const toggleModel = (providerId, modelId, checked) => {
+      setVisible(providerId, toggleVisibleSelection(catalogs[providerId]?.models, p0?.visibleModels?.[providerId], modelId, checked));
     };
     const runLocalTest = (platformId, channel) => run(`ltest:${platformId}:${channel}`, async () => {
       const key = platformId + ':' + channel;
@@ -995,14 +1014,8 @@ window.__ModuleLoader__.load({
       }));
     });
     const toggleLocalModel = (platformId, modelId, checked) => {
-      const all = (localCatalogs[platformId]?.models || []).map(model => model.id);
-      const current = snapshot?.settings?.[platformId]?.visibleModels || [];
-      const matched = current.filter(id => all.includes(id));
-      const effective = matched.length ? matched : (platformId === 'cursor' && localCatalogs[platformId]?.recommendedModels?.length ? localCatalogs[platformId].recommendedModels : all);
-      const next = checked ? [...new Set([...effective, modelId])] : effective.filter(id => id !== modelId);
-      // 空数组在后端表示「全部显示」，不允许取消最后一个可见模型
-      if (!next.length) return;
-      setLocalVisible(platformId, next);
+      const fallback = platformId === 'cursor' ? localCatalogs[platformId]?.recommendedModels : undefined;
+      setLocalVisible(platformId, toggleVisibleSelection(localCatalogs[platformId]?.models, snapshot?.settings?.[platformId]?.visibleModels, modelId, checked, fallback));
     };
     const errorNote = key => errors[key] ? h(Callout, { key: 'err-' + key, tone: 'err' }, h('p', null, errors[key])) : null;
 
@@ -1041,17 +1054,16 @@ window.__ModuleLoader__.load({
       const models = catalog?.models || [];
       const query = modelQuery.trim().toLowerCase();
       const shown = query ? models.filter(model => (model.id + ' ' + (model.name || '')).toLowerCase().includes(query)) : models;
-      const matched = visible.filter(id => models.some(model => model.id === id));
-      const staleSelection = visible.length > 0 && matched.length === 0 && models.length > 0;
-      const effectiveVisible = matched.length ? matched : models.map(model => model.id);
+      const { stale: staleSelection, effective: effectiveVisible } = resolveVisibleSelection(models, visible);
       const visibleCount = effectiveVisible.length;
+      const allSelected = models.length > 0 && visibleCount >= models.length;
       const pageKey = 'api:' + id;
       const limit = modelLimits[pageKey] || 80;
       return h('div', { id: 'hub-models-' + id, className: 'hub-models', role: 'region', 'aria-label': provider.name + ' 模型可见性' },
         h('div', { className: 'hub-models-bar' },
           h('label', { className: 'hub-search' }, h(Icon, { name: 'search', size: 14 }), h('input', { type: 'search', value: modelQuery, onChange: event => setModelQuery(event.target.value), placeholder: '搜索模型 ID', 'aria-label': '搜索模型' })),
           catalog ? h('span', { className: 'hub-muted num' }, `可见 ${visibleCount} / ${models.length}`) : null,
-          h(Btn, { size: 'sm', variant: 'ghost', disabled: !visible.length, busy: saving, onClick: () => setVisible(id, []), title: '清空选择，恢复为全部显示' }, '全部显示'),
+          h(Btn, { size: 'sm', variant: 'ghost', disabled: !models.length, busy: saving, onClick: () => setVisible(id, allSelected ? [NONE_MODELS_SENTINEL] : []) }, allSelected ? '取消全部选中' : '全部选中'),
           h(Btn, { size: 'sm', variant: 'ghost', icon: 'refresh', busy: loading, onClick: () => loadModels(id, true) }, '刷新目录')),
         errorNote('models:' + id),
         errorNote('visible:' + id),
@@ -1060,9 +1072,8 @@ window.__ModuleLoader__.load({
         catalog && !models.length ? h(Empty, { compact: true, icon: 'cpu', title: '上游没有返回模型' }) : null,
         shown.length ? h('div', { className: 'hub-model-grid' }, shown.slice(0, limit).map(model => {
           const checked = effectiveVisible.includes(model.id);
-          const locked = checked && visibleCount <= 1;
-          return h('label', { key: model.id, className: 'hub-model', 'data-checked': checked ? 'true' : 'false', title: locked ? '至少保留一个可见模型；如需恢复全部请点「全部显示」' : model.id },
-            h('input', { type: 'checkbox', checked, disabled: locked || saving, onChange: event => toggleModel(id, model.id, event.target.checked) }),
+          return h('label', { key: model.id, className: 'hub-model', 'data-checked': checked ? 'true' : 'false', title: model.id },
+            h('input', { type: 'checkbox', checked, disabled: saving, onChange: event => toggleModel(id, model.id, event.target.checked) }),
             h('span', { className: 'hub-model-check', 'aria-hidden': true }, h(Icon, { name: 'check', size: 12 })),
             h('span', { className: 'hub-model-name' }, model.id),
             model.name && model.name !== model.id ? h('small', null, model.name) : null);
@@ -1079,11 +1090,12 @@ window.__ModuleLoader__.load({
       const test = tests[id];
       const catalog = catalogs[id];
       const visible = p0?.visibleModels?.[id] || [];
+      const noneSelected = visible.length === 1 && visible[0] === NONE_MODELS_SENTINEL;
       const [tone, label] = p0Status(provider, test);
       const open = modelOpen === id;
       const visibleText = catalog
-        ? (visible.length ? `${catalog.models.filter(model => visible.includes(model.id)).length} / ${catalog.models.length}` : `全部 ${catalog.models.length}`)
-        : (visible.length ? `已选 ${visible.length}` : has ? '全部' : DASH);
+        ? (noneSelected ? `0 / ${catalog.models.length}` : visible.length ? `${catalog.models.filter(model => visible.includes(model.id)).length} / ${catalog.models.length}` : `全部 ${catalog.models.length}`)
+        : (noneSelected ? '已选 0' : visible.length ? `已选 ${visible.length}` : has ? '全部' : DASH);
       return h('article', { key: id, id: 'hub-p-' + id, className: 'hub-card hub-pcard', 'aria-labelledby': 'hub-pt-' + id },
         h('header', { className: 'hub-pcard-head' },
           h(PlatformMark, { id }),
@@ -1151,17 +1163,15 @@ window.__ModuleLoader__.load({
       const models = (readOnly ? dshAccount?.models : catalog?.models) || [];
       const query = localModelFilter.trim().toLowerCase();
       const shown = query ? models.filter(model => [model.id, model.name, model.provider].filter(Boolean).join(' ').toLowerCase().includes(query)) : models;
-      const matched = visible.filter(id => models.some(model => model.id === id));
-      const staleSelection = visible.length > 0 && matched.length === 0 && models.length > 0;
-      const effectiveVisible = matched.length ? matched : (id === 'cursor' && staleSelection && catalog?.recommendedModels?.length ? catalog.recommendedModels : models.map(model => model.id));
+      const { stale: staleSelection, effective: effectiveVisible } = resolveVisibleSelection(models, visible, id === 'cursor' ? catalog?.recommendedModels : undefined);
       const visibleCount = effectiveVisible.length;
+      const allSelected = models.length > 0 && visibleCount >= models.length;
       const pageKey = 'local:' + id;
       const limit = modelLimits[pageKey] || 40;
       const renderModel = model => {
         const checked = effectiveVisible.includes(model.id);
-        const locked = checked && visibleCount <= 1;
-        return h(readOnly ? 'span' : 'label', { key: model.id, className: 'hub-model', 'data-checked': checked ? 'true' : 'false', 'data-readonly': readOnly ? 'true' : undefined, title: !readOnly && locked ? '至少保留一个可选模型' : model.id },
-          readOnly ? null : h('input', { type: 'checkbox', checked, disabled: locked || saving, onChange: event => toggleLocalModel(id, model.id, event.target.checked) }),
+        return h(readOnly ? 'span' : 'label', { key: model.id, className: 'hub-model', 'data-checked': checked ? 'true' : 'false', 'data-readonly': readOnly ? 'true' : undefined, title: model.id },
+          readOnly ? null : h('input', { type: 'checkbox', checked, disabled: saving, onChange: event => toggleLocalModel(id, model.id, event.target.checked) }),
           h('span', { className: 'hub-model-check', 'aria-hidden': true }, h(Icon, { name: 'check', size: 12 })),
           h('span', { className: 'hub-model-name' }, model.name || model.id),model.badge?.text?h('small',{className:'hub-chip'},model.badge.text):null);
       };
@@ -1173,8 +1183,7 @@ window.__ModuleLoader__.load({
           h('h4', null, '可用模型'),
           h('label', { className: 'hub-search' }, h(Icon, { name: 'search', size: 14 }), h('input', { type: 'search', value: localModelFilter, onChange: event => setLocalModelFilter(event.target.value), placeholder: '搜索模型名称或 ID', 'aria-label': '搜索模型' })),
           (catalog?.at || readOnly) ? h('span', { className: 'hub-muted num' }, `可见 ${visibleCount} / ${models.length}`) : null,
-          id === 'cursor' ? h(Btn, { size: 'sm', variant: 'ghost', disabled: !catalog?.recommendedModels?.length || saving, onClick: () => setLocalVisible(id, catalog.recommendedModels) }, '恢复常用') : null,
-          !readOnly ? h(Btn, { size: 'sm', variant: 'ghost', disabled: !visible.length, busy: saving, onClick: () => setLocalVisible(id, []), title: '清空选择，恢复为全部显示' }, '全部显示') : null,
+          !readOnly ? h(Btn, { size: 'sm', variant: 'ghost', disabled: !models.length, busy: saving, onClick: () => setLocalVisible(id, allSelected ? [NONE_MODELS_SENTINEL] : []) }, allSelected ? '取消全部选中' : '全部选中') : null,
           ...(!readOnly && id !== 'workbuddy-cn' ? modelTestActions(id) : [])),
         !readOnly ? localTestResult(id, 'model', '模型') : null,
         !readOnly ? localTestResult(id, 'subagent', '子代理') : null,
@@ -1187,7 +1196,7 @@ window.__ModuleLoader__.load({
           h('p', { className: 'hub-muted num' }, `已选 ${visibleCount}`),
           selectedRows.length ? h('div', { className: 'hub-model-grid' }, selectedRows.slice(0, limit).map(renderModel)) : null,
           more(selectedRows.length),
-          otherRows.length ? h('details', { className: 'hub-model-more', ...(query ? { open: true } : {}) },
+          otherRows.length ? h('details', { className: 'hub-model-more', ...(query || !selectedRows.length ? { open: true } : {}) },
             h('summary', null, `其他模型（${otherRows.length}）`),
             h('div', { className: 'hub-model-grid' }, otherRows.slice(0, limit).map(renderModel)), more(otherRows.length)) : null
         ) : shown.length ? h('div', { className: 'hub-model-grid' }, shown.slice(0, limit).map(renderModel)) : null,
@@ -1661,34 +1670,6 @@ window.__ModuleLoader__.load({
               { label: '裁剪字符', num: true, cell: row => fmtInt(row.omittedChars) }
             ], [...days].reverse(), row => row.date))));
     };
-    const usageQuota = platform => {
-      if (['antigravity', 'cursor', 'codex'].includes(platform)) {
-        return quotaBlock(platforms.find(item => item.platform === platform)?.quota);
-      }
-      let value = DASH, sub = '', error = '';
-      if (platform === 'deepseek') {
-        value = dshAccount ? (dshAccount.signedOut ? '未登录' : dshBalanceText()) : DASH;
-        error = dshError;
-      } else if (platform === 'workbuddy-cn') {
-        const credit = workbuddy?.credits?.remaining;
-        value = isNum(credit) ? fmtMoney(credit) + ' 积分' : DASH;
-        error = workbuddyError || workbuddy?.error || '';
-      } else if (platform !== 'custom') {
-        const row = platforms.find(item => item.platform === platform);
-        const quota = row?.quota;
-        value = localQuotaText(quota);
-        if (quota?.kind === 'window') sub = (quota.windows || []).filter(win => win.resetAt).map(win => `${WINDOW_SHORT[win.id] || win.id} 重置 ${fmtWhen(win.resetAt)}`).join(' · ');
-        else {
-          const count = localCatalogs[platform]?.at ? localCatalogs[platform].models.length : row?.models?.length || quota?.modelCount;
-          if (count) sub = fmtInt(count) + ' 个模型';
-        }
-        error = quota?.error?.message || '';
-      }
-      return h('div', { className: 'hub-quota' },
-        h('div', { className: 'hub-quota-head' }, h('span', { className: 'hub-quota-label' }, '配额'), sub ? h('span', { className: 'hub-quota-src' }, sub) : null),
-        h('span', { className: 'hub-quota-value' }, value),
-        error ? h('p', { className: 'hub-quota-err' }, h(Icon, { name: 'alert', size: 13 }), errText(error)) : null);
-    };
     const usageClear = platform => run('usageReset', async () => {
       await call('usageReset', platform ? { platform } : {});
       flash(platform ? `已清除 ${usagePlatformName(platform)} 用量` : '已清空用量统计');
@@ -1738,7 +1719,6 @@ window.__ModuleLoader__.load({
           ...usageNotices(data),
           usagePlatformMetrics(data.totals),
           usageContext(data),
-          usageQuota(platform),
           usageChannels(data),
           h(Section, { id: 'hub-sec-platform-models', title: '模型 × 强度' }, usageModelTable(data.models, false)),
           h(Section, { id: 'hub-sec-platform-recent', title: '最近调用', actions: usageStatus(data) }, usageRecentTable(data.recent, false))

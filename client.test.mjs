@@ -43,7 +43,9 @@ test('模型管理独立注册左侧入口与匹配的主面板，无需办公�
 });
 test('独立面板保留模型、账号、用量入口及现有服务路径',()=>{
   assert(client.includes("const HUB_API = '/plugins/dsh-ai-hub/api'"));
-  for(const title of ['总览','平台','用量','可选模型','恢复常用'])assert(client.includes(title));
+  for(const title of ['总览','平台','用量','全部选中','取消全部选中'])assert(client.includes(title));
+  assert(!client.includes('恢复常用'));
+  assert(!client.includes('全部显示'));
   assert(!client.includes("['settings'"));
   assert(!client.includes('gatewayPanel'));
   assert(!client.includes("['routing'"));
@@ -59,12 +61,14 @@ test('路由与营销文案移除，视觉不使用渐变、发光或大圆角',
   assert(!/\p{Extended_Pictographic}/u.test(client.replace(/const PLATFORM_ICONS=.*\n/,'')));
   assert(client.includes('tabular-nums'));
 });
-test('平台页账号和用量 Tab 支持键盘切换，用量页包含范围、渠道、上下文、配额与最近调用',()=>{
+test('平台页账号和用量 Tab 支持键盘切换且切换平台保持当前子 Tab，用量页不含额度卡片并保留范围、渠道、上下文与最近调用',()=>{
   for(const label of ["'account','账号'","'usage','用量'"])assert(client.includes(label),label);
   assert(client.includes("role:'tablist'"));
   for(const key of ['ArrowLeft','ArrowRight','Home','End'])assert(client.includes(`'${key}'`),key);
-  for(const text of ["['today', '今日']","['7d', '7天']","['30d', '30天']","['all', '全部']",'上下文构成','渠道拆分','配额','模型 × 强度','最近调用','暂无用量','包含测活'])assert(client.includes(text),text);
+  for(const text of ["['today', '今日']","['7d', '7天']","['30d', '30天']","['all', '全部']",'上下文构成','渠道拆分','模型 × 强度','最近调用','暂无用量','包含测活'])assert(client.includes(text),text);
   for(const channel of ['chat','subagent','test','gateway','native'])assert(client.includes(`${channel}: '`),channel);
+  assert(!client.includes('usageQuota('));
+  assert(!/const choosePlatform=id=>\{[^}]*setBusinessTab/.test(client));
 });
 test('用量口径：实际与估算分列、P95 近似标注、原生输入未读取、模型搜索走服务端',()=>{
   assert(client.includes("'≈' + fmtMs(row.p95LatencyMs)"));
